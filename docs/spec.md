@@ -1,4 +1,4 @@
-# gcloud-wif-visualizer 仕様（ドラフト v0.4）
+# gcloud-wif-visualizer 仕様（ドラフト v0.5）
 
 ## 1. 目的
 
@@ -167,7 +167,7 @@ container（org / folder / project）に付与されたロールを、配下の�
 
 1. ロールの permission を service prefix とリソース種別で分類する（例: `storage.objects.get` → `storage` / `objects`）。
 2. **permission → アセットタイプの対応表**（ツールに同梱する）を使って、対象のアセットタイプを決める。
-3. Cloud Asset `searchAllResources` で、container 配下にある該当アセットタイプのリソースを列挙する。
+3. Cloud Asset `searchAllResources` で、対象アセットタイプのインベントリを **Org 全体で 1 回だけ** 取得し、各リソースの `project` / `folders` / `organization` で container 配下かどうかを判定する（container ごとに API を呼ばない）。
 4. リソースそのものに付与されたバインディング（バケットの IAM など）は、手順 4・5 で既に取得済みのため、そのまま使う。
 
 ### MVP で対象にするアセットタイプ（案）
@@ -187,12 +187,11 @@ Cloud Asset `analyzeIamPolicy`（Policy Analyzer）を PoC で試した結果は
 | SA を identity に指定 | 動作する。org レベルの付与も実リソースまで展開される |
 | 粒度 | 非常に細かい（Docker イメージのダイジェスト単位まで出る）。ACL がバインディングごとに出るので重複も多い（例: 1 SA で 4,531 件） |
 | 実行時間 | SA 1 件あたり 2〜35 秒（付与範囲の広さによる） |
-| クォータ | 未確認 |
+| クォータ | quota project あたり 200 回/日、100 回/分（`AnalyzeIamPolicy Requests`） |
 
-**方針**: impersonation の探索は自前で行う（Policy Analyzer は WIF principal を扱えないため）。リソース展開は次の 2 つを PoC 第 2 段で比較して決める。
+**決定**: impersonation の探索もリソース展開も自前で行う（方式 (a)）。Policy Analyzer は `collect --verify` オプションで、到達した SA を対象に (a) の結果と突き合わせる検証用に残す（15 章の PoC 第 2 段の結果による）。
 
-- (a) 自前の対応表 + `searchAllResources`（上記の方式）
-- (b) 到達した SA ごとに Policy Analyzer を呼び、アセットタイプでフィルタして重複を除く。principal へ直接付与されたロールだけ (a) で展開する
+- 将来、IAM Conditions を評価したくなった場合は、Policy Analyzer の利用を再検討する（Policy Analyzer は条件を評価できる）。
 
 ## 7.5 `actAs` 権限の検出
 
@@ -270,10 +269,8 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 
 ## 12. 未決事項
 
-- [ ] リソース展開の方式: 自前の対応表か、Policy Analyzer のハイブリッドか（PoC 第 2 段）
-- [ ] Policy Analyzer のクォータ
 - [ ] グラフ描画ライブラリの選定（PoC。React Flow + elkjs と Cytoscape.js を比較する）
-- [ ] 展開対象アセットタイプの最終リスト
+- [ ] 展開対象アセットタイプの最終リスト（`searchAllResources` で検索可能なタイプに限る。対応表のテストで検証する）
 
 ## 13. マイルストーン（案）
 
@@ -304,3 +301,33 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 - 実データでも `iam-admin-reachable` に相当する経路が見つかり、Lint の価値が高いことを確認した。
 - `roles.get` はキャッシュと並列化で短縮できる。predefined ロールの permission は同梱してもよい。
 - pnpm 12 では、依存パッケージのビルドスクリプトを `pnpm-workspace.yaml` の `allowBuilds` で明示する必要がある。
+
+## 15. PoC 結果（2026-10-19、第 2 段: リソース展開方式の比較）
+
+`poc/src/expand.ts` で、第 1 段の出力（到達した 4 つの SA と HAS_ROLE 44 件）を入力に、2 つの方式を比較した。
+
+| | (a) 自前（対応表 + インベントリ） | (b) Policy Analyzer（SA ごと） |
+|---|---|---|
+| 実効アクセス件数（MVP のアセットタイプに限定） | 273 | 273 |
+| 一致 | 273 件すべて一致（片方にしかないもの 0 件） | ← |
+| 所要時間 | インベントリ取得 2.6 秒 + 展開 23 ミリ秒 | 46.9 秒（SA 1 件あたり 1.4〜22 秒） |
+| API 呼び出し | インベントリ 1 回（ページング） | SA の数だけ（クォータ 200 回/日） |
+| 生の出力 | — | 8,642 件（Docker イメージなどの下位リソースや、バインディングごとの重複を含む）→ フィルタ後 275 件 |
+
+### 結論
+
+- 対象範囲では (a) と (b) の結果が完全に一致し、(a) は約 18 倍速く、クォータの制約もない。**(a) を採用する。**
+- (b) は検証用のオプションとして残す。対応表の漏れや誤りを見つけるのに使える。
+
+### 検証できていないこと（実データに存在しなかったもの）
+
+- カスタムロール
+- IAM Conditions 付きのバインディング
+- folder 階層（この Org には folder がない）
+- リソース単位のバインディング（今回はすべて org / project への付与だった）
+
+これらは fixture を作って core のテストで確認する。可能であれば、より大きな Org で `--verify` を実行して対応表の漏れを確認する。
+
+### その他
+
+- `cloudscheduler.googleapis.com/Job` は `searchAllResources` で検索できなかった（INVALID_ARGUMENT）。対応表のアセットタイプは、検索可能なタイプの一覧と照合するテストを用意する。
