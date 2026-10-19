@@ -1,4 +1,4 @@
-# gcloud-wif-visualizer 仕様（ドラフト v0.3）
+# gcloud-wif-visualizer 仕様（ドラフト v0.4）
 
 ## 1. 目的
 
@@ -95,11 +95,12 @@ wif-viz diff old.json new.json [--format text|json|markdown]
 1. **組織構造**: Cloud Asset `searchAllResources` で org / folder / project を取得する（ancestors、project ID ⇔ number の対応）
 2. **WIF 設定**: Cloud Asset で Pool / Provider を列挙し、IAM API で詳細（mapping / condition / issuer）を取得する
 3. **ロール定義**: 出現したロールを IAM API で permission に展開してキャッシュする（predefined、org/project のカスタムロール）
-4. **起点のバインディング**: Cloud Asset `searchAllIamPolicies` で WIF principal（`principal://` / `principalSet://`）を含むバインディングを取得する
+4. **起点のバインディング**: Cloud Asset `searchAllIamPolicies`（query: `policy:workloadIdentityPools`）で WIF principal を含むバインディングを取得し、member 文字列で厳密にフィルタする（PoC で確認済み。`policy:principal` はヒットしない）
 5. **impersonation の探索（BFS）**:
    - 到達した identity ごとに `searchAllIamPolicies` でバインディングを取得する
    - impersonation 系の permission を含むバインディングを `CAN_IMPERSONATE` とし、行き先の SA を次の探索対象に加える（container に付与されたものは配下の全 SA に展開する）
    - 訪問済みの SA はスキップする（循環対策）。最大深さは `--max-depth`（デフォルト 5）で指定する
+   - 自分自身への impersonation（SA に自身の tokenCreator が付いているケース）は self-loop として除外する
 6. **リソース展開**: 7 章
 7. **正規化**: グラフを構築し、Workload 推定、EffectiveAccess 生成、Lint を実行して `snapshot.json` を出力する
 
@@ -148,7 +149,11 @@ Provider の `issuerUri` が `https://token.actions.githubusercontent.com` で�
 | `attribute.workflow_ref` / `job_workflow_ref` | 特定の（reusable）workflow |
 | `*`（Pool 全体） | attributeCondition を満たす全ワークロード |
 
-3. **attributeCondition で絞り込む。** CEL を簡易パースし、`==`、`in [...]`、`startsWith`、`&&` の組み合わせだけを解釈する。解釈できない部分は原文のまま注記する。
+3. **attributeCondition で絞り込む。** CEL を簡易パースし、`==`、`in [...]`、`startsWith`、`&&`、`||`、括弧の組み合わせだけを解釈する。解釈できない部分は原文のまま注記する。
+   - 参照は `assertion.*` と `attribute.*` の両方があり得る（PoC の実データでは `attribute.*` だった）。`attribute.*` は mapping で claim に戻す。
+   - 比較はリテラルが左側の場合（`'alice'==attribute.actor`）もあるので、左右どちらの順序も扱う。
+   - 例: principalSet が `attribute.environment/terraform-plan` で、condition に `'org/infra'==attribute.repository` がある場合、Workload は「repo `org/infra` の environment `terraform-plan`」になる。principal だけでは repo が決まらないため、condition の解釈は必須。
+   - `actor` による制限は、Workload の属性（「実行者 ∈ {…}」）として表示する。
 
 ### UI での表示階層
 
@@ -172,13 +177,22 @@ Cloud Storage バケット、BigQuery データセット/テーブル、Secret M
 - 対応表にないものは container 単位のまま表示する（`expanded: false`）。
 - 展開後の行数が膨らむため、UI ではデフォルトで「アセットタイプ × container」に集約して表示し、ドリルダウンで個別のリソースを見せる。
 
-### Policy Analyzer との比較
+### Policy Analyzer との比較（PoC 結果）
 
-Cloud Asset `analyzeIamPolicy`（Policy Analyzer）はリソース展開と SA impersonation の解析を公式に提供している。ただし、以下の点が未確認のため、MVP では自前の展開を主とし、Policy Analyzer は正確性を検証する手段として PoC で比較する。
+Cloud Asset `analyzeIamPolicy`（Policy Analyzer）を PoC で試した結果は以下のとおり。
 
-- WIF の principal / principalSet を identity として指定できるか
-- クォータ（SCC のティアによって 1 日あたりのクエリ数に制限があるか）
-- Org 全体を対象にしたときの実行時間
+| 項目 | 結果 |
+|---|---|
+| WIF の principalSet を identity に指定 | **結果 0 件**（エラーにはならないが、マッチしない）。WIF 起点の探索には使えない |
+| SA を identity に指定 | 動作する。org レベルの付与も実リソースまで展開される |
+| 粒度 | 非常に細かい（Docker イメージのダイジェスト単位まで出る）。ACL がバインディングごとに出るので重複も多い（例: 1 SA で 4,531 件） |
+| 実行時間 | SA 1 件あたり 2〜35 秒（付与範囲の広さによる） |
+| クォータ | 未確認 |
+
+**方針**: impersonation の探索は自前で行う（Policy Analyzer は WIF principal を扱えないため）。リソース展開は次の 2 つを PoC 第 2 段で比較して決める。
+
+- (a) 自前の対応表 + `searchAllResources`（上記の方式）
+- (b) 到達した SA ごとに Policy Analyzer を呼び、アセットタイプでフィルタして重複を除く。principal へ直接付与されたロールだけ (a) で展開する
 
 ## 7.5 `actAs` 権限の検出
 
@@ -236,6 +250,8 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 | `org-level-token-creator` | folder / org レベルで impersonation 権限が付与されている | high | SA 単位の付与に置き換える |
 | `disabled-but-bound` | 無効化された Pool / Provider / SA へのバインディングが残っている | low | 不要なバインディングを削除する |
 | `dangling-principal` | 存在しない Pool を参照するバインディングがある | medium | 不要なバインディングを削除する |
+| `iam-admin-reachable` | WIF 経由で IAM を書き換えられるロール（`*.setIamPolicy`、`resourcemanager.organizationAdmin`、`resourcemanager.projectIamAdmin`、`iam.serviceAccountAdmin`、`iam.workloadIdentityPoolAdmin` など）に到達できる。実質的に権限を際限なく拡大できる | high | 付与範囲を限定する、environment の保護ルール（required reviewers）を必須にする |
+| `github-actor-based-trust` | condition が `actor`（ユーザー名）に依存している。actor は名前ベースで、workflow の再実行者によっても変わる | low | owner / repo の ID と environment で制限する |
 
 ## 10. 技術スタック（案）
 
@@ -254,7 +270,8 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 
 ## 12. 未決事項
 
-- [ ] Policy Analyzer と自前展開の比較結果（PoC）
+- [ ] リソース展開の方式: 自前の対応表か、Policy Analyzer のハイブリッドか（PoC 第 2 段）
+- [ ] Policy Analyzer のクォータ
 - [ ] グラフ描画ライブラリの選定（PoC。React Flow + elkjs と Cytoscape.js を比較する）
 - [ ] 展開対象アセットタイプの最終リスト
 
@@ -265,3 +282,25 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 3. **リソース展開と Lint**
 4. **Web UI**（対応推奨リスト、グラフ、テーブル）
 5. **diff**（CLI、UI の差分モード）
+
+## 14. PoC 結果（2026-10-19、第 1 段）
+
+`poc/src/probe.ts` で、個人 Org（10 プロジェクト、1,519 リソース）に対して実行した。
+
+| 指標 | 値 |
+|---|---|
+| Pool / Provider | 3 / 3（すべて GitHub Actions） |
+| WIF principal を含むバインディング | 4 件（すべて SA への `workloadIdentityUser`、principalSet） |
+| 抽出されたエッジ | HAS_ROLE 44 / CAN_ACT_AS 28 / CAN_IMPERSONATE 5（self-loop 1 件を含む） |
+| 出現したロール | 36 |
+| 収集時間（Policy Analyzer を除く） | 約 41 秒。内訳の大半は `roles.get`（直列で 18 秒）と `providers.get`（8 秒） |
+
+### わかったこと
+
+- `policy:workloadIdentityPools` で WIF のバインディングをまとめて取得できる。
+- Policy Analyzer は WIF principal を扱えない（7 章）。
+- container レベルの `iam.serviceAccountUser` を展開すると `CAN_ACT_AS` がすぐに増える（28 件）。UI では「付与箇所 × ロール」で集約して表示する必要がある。
+- org レベルのロールを持つ SA に到達できると、展開対象が Org 全体になる。集約表示は必須。
+- 実データでも `iam-admin-reachable` に相当する経路が見つかり、Lint の価値が高いことを確認した。
+- `roles.get` はキャッシュと並列化で短縮できる。predefined ロールの permission は同梱してもよい。
+- pnpm 12 では、依存パッケージのビルドスクリプトを `pnpm-workspace.yaml` の `allowBuilds` で明示する必要がある。
