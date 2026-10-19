@@ -1,4 +1,4 @@
-# gcloud-wif-visualizer 仕様（ドラフト v0.5）
+# gcloud-wif-visualizer 仕様（ドラフト v0.6）
 
 ## 1. 目的
 
@@ -215,7 +215,10 @@ MVP では、実際にデプロイできるかまでは判定せず、**actAs �
 
 ## 9. Web UI
 
-- **グラフビュー**: 左から右へ Workload → Pool/Provider → Principal → SA（多段）→ Container/Resource のレイヤー表示。ノードを選択すると、そのノードを通る経路をハイライトする。
+- **グラフビュー**: 左から右へ Workload → Pool/Provider → Principal → SA（多段）→ Container/Resource のレイヤー表示。
+  - **フォーカス表示（デフォルト）**: Workload、SA、リソースなどを 1 つ選び、そのノードを通る経路（上流と下流）のサブグラフだけをレイアウトして表示する。フォーカス中にノードをクリックすると、そのノードを中心に表示し直す（ドリルダウン）。対応推奨リストや検索からの遷移先もこの表示にする。
+  - **概観表示**: Org 全体を表示する。Workload → SA の層までに集約し、リソースは表示しない（目安として 600 ノード以内に収める）。ノードを選択すると経路をハイライトし、フォーカス表示へ移れる。
+  - リソースのまとまり（resourceGroup）は「identity × 付与箇所 × アセットタイプ」の単位で作る。付与箇所だけで作ると、同じ container に権限を持つ別の identity の分までハイライトが広がるため。
 - **検索/フィルタ**: Workload、SA、リソース、ロール、プロジェクト、アセットタイプで絞り込む。フォワード / リバースを切り替えられる。
 - **テーブルビュー**: EffectiveAccess の一覧。CSV でエクスポートできる。
 - **対応推奨リスト**: Lint の結果を「やることリスト」として見せる画面（下記）。
@@ -257,7 +260,7 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 - Node.js 22+ / TypeScript / pnpm workspaces
   - `packages/core`: 型定義、グラフ構築、impersonation の探索、リソース展開、Workload 推定、Lint、差分（API に依存しない純粋なロジック）
   - `packages/collector`: `@google-cloud/asset`、`googleapis`（iam v1）。レート制限とリトライを扱う。
-  - `packages/web`: Vite + React + グラフ描画ライブラリ（React Flow + elkjs、または Cytoscape.js。PoC で選定する）
+  - `packages/web`: Vite + React + **React Flow（`@xyflow/react`）+ elkjs**。レイアウトは Web Worker で計算する（16 章の PoC 結果による）
   - `packages/cli`: `collect` / `serve` / `diff`
 - テスト: Vitest。API レスポンスの fixture を使って core を重点的にテストする。
 
@@ -269,7 +272,6 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 
 ## 12. 未決事項
 
-- [ ] グラフ描画ライブラリの選定（PoC。React Flow + elkjs と Cytoscape.js を比較する）
 - [ ] 展開対象アセットタイプの最終リスト（`searchAllResources` で検索可能なタイプに限る。対応表のテストで検証する）
 
 ## 13. マイルストーン（案）
@@ -331,3 +333,44 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 ### その他
 
 - `cloudscheduler.googleapis.com/Job` は `searchAllResources` で検索できなかった（INVALID_ARGUMENT）。対応表のアセットタイプは、検索可能なタイプの一覧と照合するテストを用意する。
+
+## 16. PoC 結果（2026-10-19、描画ライブラリの比較）
+
+`poc/viz`（Vite + React）で、React Flow（`@xyflow/react` 12）と Cytoscape.js（3.34）を比較した。
+
+### 条件
+
+- レイアウトは両方とも elkjs（layered、左→右）で同じ座標を計算し、各ライブラリには描画だけを担当させた。
+- 経路ハイライトは同じ関数（上流と下流の BFS）を使った。
+- 開発モードの Chrome で計測した。ズームはホイールイベントを 90 フレーム送ったときのフレーム時間。
+
+| データ | ノード / エッジ | ELK レイアウト | | React Flow | Cytoscape.js |
+|---|---|---|---|---|---|
+| real | 89 / 103 | 0.1 秒 | 初回描画 | 663 ms | 66 ms |
+| | | | ハイライト | — | 17 ms |
+| synthetic-m | 592 / 913 | 0.6 秒 | 初回描画 | 667 ms | 220 ms |
+| | | | ハイライト | 365 ms | 87 ms |
+| | | | ズーム（p50 / p95） | 15 / 63 ms | 8 / 18 ms |
+| | | | ヒープ / DOM 要素数 | 228 MB / 7,132 | 132 MB / 38 |
+| synthetic-l | 3,067 / 4,878 | **7〜8 秒** | 初回描画 | 1,793 ms | 848 ms |
+| | | | ハイライト | 923 ms | 254 ms |
+| | | | ズーム（p50 / p95） | 61 / 218 ms（カクつく） | 38 / 54 ms |
+| | | | ヒープ / DOM 要素数 | 746 MB / 25,708 | 458 MB / 38 |
+
+### わかったこと
+
+- **性能は Cytoscape.js が全規模で優位。** 3,000 ノード規模でも操作できる。React Flow は 600 ノード程度までなら実用的だが、3,000 ノードではズームがカクつく。
+- **ノードの見た目は React Flow が作りやすい。** ノードは React コンポーネントなので、Lint バッジ、展開ボタン、ツールチップを自由に作れる。Cytoscape.js は canvas 描画なので、リッチなノードには HTML オーバーレイの拡張が必要。
+- **ライブラリより UX 設計の影響が大きい。** 実データ（89 ノード）でも全体表示は読みにくい。特に、org レベルの container から大量の resourceGroup へ扇状にエッジが伸びる。
+  - デフォルトは**フォーカス表示**（Workload やリソースを選び、その経路のサブグラフだけを表示する）にするべき。全体表示は概観用。
+  - container 配下の resourceGroup は identity 間で共有されるため、ハイライトが広がりすぎる。resourceGroup は「identity × container × アセットタイプ」の単位で作る。
+- **ELK は大規模データでは重い。** 3,000 ノードで 7〜8 秒かかるので、Web Worker で実行するか、フォーカス表示のサブグラフだけをレイアウトする。
+
+### 決定
+
+**React Flow + elkjs を採用する。**
+
+- フォーカス表示をデフォルトにすれば、表示されるノードは多くの場合数百以下で、その規模なら React Flow でも十分な速さで動く。
+- ノードを React コンポーネントとして作れるので、Lint バッジ、ロール一覧、展開ボタン、対応推奨リストとの連携を作りやすい。
+- 実際に PoC の画面を触ったうえで判断した。
+- 数千ノードの全体表示が必要になった場合は、概観表示だけ Cytoscape.js に切り替えることを検討する。
