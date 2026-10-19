@@ -1,5 +1,6 @@
 packages:
   - poc
+  - poc/viz
   - packages/*
 
 allowBuilds:

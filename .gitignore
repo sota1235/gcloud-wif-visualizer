@@ -3,3 +3,4 @@ dist/
 poc/out/
 *.snapshot.json
 .wif-viz/
+poc/viz/public/data/

@@ -103,7 +103,7 @@ const reachedSAs = identities.filter((i) => i.startsWith('serviceAccount:'));
 const accessB: Access[] = accessA.filter((a) => !a.identity.startsWith('serviceAccount:'));
 const analyzerStats: Record<string, { ms: number; rawResources: number; kept: number; error?: string }> = {};
 start = performance.now();
-for (const identity of reachedSAs) {
+for (const identity of process.env.SKIP_ANALYZER ? [] : reachedSAs) {
   const t = performance.now();
   try {
     const [res] = await asset.analyzeIamPolicy({
@@ -142,7 +142,7 @@ const countBy = <T>(xs: T[], f: (x: T) => string) =>
   xs.reduce<Record<string, number>>((acc, x) => ((acc[f(x)] = (acc[f(x)] ?? 0) + 1), acc), {});
 const typeOf = (a: Access) => assetTypeByName.get(a.resource) ?? '?';
 
-await writeFile(new URL('../out/expand.json', import.meta.url), JSON.stringify({ onlyA, onlyB, analyzerStats }, null, 2));
+await writeFile(new URL('../out/expand.json', import.meta.url), JSON.stringify({ accessA: accessA.map((a) => ({ ...a, assetType: typeOf(a) })), onlyA, onlyB, analyzerStats }, null, 2));
 
 console.log(`inventory: ${inventory.length} resources (${TARGET_ASSET_TYPES.length} types) in ${inventoryMs}ms`);
 console.log(`(a) ${setA.size} accesses, expand ${expandAMs}ms (+ inventory)`);
