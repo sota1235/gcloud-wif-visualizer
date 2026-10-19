@@ -1,0 +1,17 @@
+{
+  "name": "@wif-viz/core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
