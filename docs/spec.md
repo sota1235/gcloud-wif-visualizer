@@ -76,7 +76,7 @@ type EffectiveAccess = {
 
 - **Principal は Pool 単位で、Provider 単位ではない。** 同じ Pool に Provider が複数あると経由 Provider を特定できないため、候補の一覧として保持する。
 - **project ID と number の対応を解決する必要がある。** principal の識別子には project number が入るため、収集時に対応表を作る。
-- **impersonation の判定はロール名ではなく permission で行う。** `iam.serviceAccounts.getAccessToken` / `getOpenIdToken` / `signJwt` / `signBlob` を含むロール（カスタムロールを含む）を impersonation 可能とみなす。
+- **impersonation の判定はロール名ではなく permission で行う。** `iam.serviceAccounts.getAccessToken` / `getOpenIdToken` / `signJwt` / `signBlob` / `implicitDelegation`、`iam.serviceAccountKeys.create`（鍵を作れれば長期的な資格情報を得られる）を含むロール（カスタムロールを含む）を impersonation 可能とみなす。
 - **project / folder / org レベルの impersonation 権限は配下の全 SA に及ぶ。** 例えば project に付与された `roles/iam.serviceAccountTokenCreator` は、その project の全 SA への `CAN_IMPERSONATE` に展開する。
 
 ## 4. アーキテクチャ
