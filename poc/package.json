@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "probe": "tsx src/probe.ts"
+    "probe": "tsx src/probe.ts",
+    "expand": "tsx src/expand.ts"
   },
   "dependencies": {
     "@google-cloud/asset": "^7.2.0",
