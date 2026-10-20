@@ -159,6 +159,15 @@ Provider の `issuerUri` が `https://token.actions.githubusercontent.com` で�
 
 GitHub owner → repository → ref / environment / workflow
 
+### 推定結果（`Workload`）
+
+- **ラベル**: `GitHub org/repo (environment: prod)`、`GitHub org/*`、`GitHub 全リポジトリ` のように、範囲の広さがわかる表現にする。
+- **制約（constraints）**: claim ごとの `eq` / `ne` / `in` / `startsWith` / `endsWith` / `contains`。principal 由来か condition 由来かを保持する。
+- **確度（confidence）**: condition と、推定に使った mapping をすべて解釈できた場合は `exact`、それ以外は `partial`。推定に使っていない mapping が解釈できなくても `exact` のままにする。
+- **到達不能（unreachable）**: principal の値と condition が矛盾する場合（例: principal は `org/other` だが condition は `repository == 'org/infra'`）。Lint の対象にする。
+- **sub claim の分解**: GitHub の `sub` は `key:value` の組として分解する（`repo:` → repository、`pull_request` は値なし）。カスタマイズされた sub（`repository_owner_id:123:...`）も同じ方法で扱う。
+- **CEL の簡易パーサー**: 対応するのは、文字列・真偽値・リスト、参照（`a.b` / `a['b']`）、`==`、`!=`、`in`、`&&`、`||`、`!`、括弧、`startsWith` / `endsWith` / `contains`。トップレベルの AND の各項を解釈し、同じ参照への `==` の OR は `in` にまとめる。解釈できない項は原文のまま残す。
+
 ## 7. 実リソースへの展開
 
 ### 方式
