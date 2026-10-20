@@ -4,10 +4,14 @@
   "type": "module",
   "scripts": {
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "wif-viz": "tsx packages/cli/src/main.ts"
   },
   "packageManager": "pnpm@12.8.1",
   "engines": {
     "node": ">=22"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }
