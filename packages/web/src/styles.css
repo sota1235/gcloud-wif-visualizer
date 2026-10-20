@@ -490,3 +490,43 @@ code {
   padding-top: 4px;
   border-top: 1px dashed var(--border);
 }
+
+.segmented {
+  display: flex;
+  margin: 12px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 6px;
+  cursor: pointer;
+}
+
+.segmented button[aria-checked='true'] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.matched-permissions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.matched-permissions code {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.show-more {
+  font-size: 12px;
+  margin: -2px 0 8px;
+}

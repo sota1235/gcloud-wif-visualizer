@@ -4,7 +4,7 @@ import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
 import { focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
 import { GraphView } from './GraphView.tsx';
-import { roleFocus, searchRoles } from './role-search.ts';
+import { reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
 import { RoleSearch } from './RoleSearch.tsx';
 import { buildViewGraph, findingFocus } from './view-graph.ts';
 
@@ -18,6 +18,7 @@ export function App() {
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [focusIds, setFocusIds] = useState<string[] | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [searchMode, setSearchMode] = useState<SearchMode>('role');
   const [roleQuery, setRoleQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
 
@@ -32,8 +33,11 @@ export function App() {
 
   const findings = useMemo(() => (snapshot ? findingsOf(snapshot) : []), [snapshot]);
   const view = useMemo(() => (snapshot ? buildViewGraph(snapshot, findings) : null), [snapshot, findings]);
-  const reachableRoles = useMemo(() => (snapshot ? [...new Set(snapshot.effectiveAccess.map((r) => r.role))].sort() : []), [snapshot]);
-  const roleMatches = useMemo(() => (snapshot && view ? searchRoles(snapshot, view, roleQuery) : []), [snapshot, view, roleQuery]);
+  const reachable = useMemo(() => (snapshot ? reachableRolesAndPermissions(snapshot) : { roles: [], permissions: [] }), [snapshot]);
+  const roleMatches = useMemo(
+    () => (snapshot && view ? searchAccess(snapshot, view, roleQuery, searchMode) : []),
+    [snapshot, view, roleQuery, searchMode],
+  );
   const roleSearchActive = tab === 'roles' && !focusIds && roleMatches.length > 0;
   const focus = useMemo(() => {
     if (!view) return null;
@@ -101,7 +105,7 @@ export function App() {
             ワークロード（{workloads.length}）
           </button>
           <button type="button" role="tab" aria-selected={tab === 'roles'} onClick={() => switchTab('roles')}>
-            ロール
+            検索
           </button>
         </div>
         {tab === 'findings' ? (
@@ -121,9 +125,11 @@ export function App() {
           />
         ) : tab === 'roles' ? (
           <RoleSearch
+            mode={searchMode}
+            onModeChange={setSearchMode}
             query={roleQuery}
             onQueryChange={setRoleQuery}
-            roles={reachableRoles}
+            candidates={searchMode === 'role' ? reachable.roles : reachable.permissions}
             matches={roleMatches}
             selectedRole={selectedRole}
             onSelectRole={setSelectedRole}
@@ -148,7 +154,7 @@ export function App() {
           {selectedFinding
             ? `検出結果の経路: ${selectedFinding.ruleId}`
             : roleSearchActive
-              ? `ロールの経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}`
+              ? `${searchMode === 'role' ? 'ロール' : 'permission'}の経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}`
               : focusIds
                 ? 'フォーカス表示'
                 : '概観（Workload → principal → SA）'}

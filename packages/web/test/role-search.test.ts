@@ -9,7 +9,7 @@ import {
   type Container,
   type MemberBinding,
 } from '@wif-viz/core';
-import { matchesRole, roleFocus, searchRoles } from '../src/role-search.ts';
+import { matchesTerms, reachableRolesAndPermissions, roleFocus, searchAccess } from '../src/role-search.ts';
 import { buildViewGraph, grantNodeId } from '../src/view-graph.ts';
 
 const ORG = '//cloudresourcemanager.googleapis.com/organizations/1';
@@ -25,7 +25,7 @@ const containers: Container[] = [
 ];
 const roles: Record<string, string[]> = {
   'roles/iam.workloadIdentityUser': ['iam.serviceAccounts.getAccessToken'],
-  'roles/storage.admin': ['storage.buckets.get'],
+  'roles/storage.admin': ['storage.buckets.get', 'storage.objects.delete', 'resourcemanager.projects.get'],
   'roles/storage.objectViewer': ['storage.objects.get'],
   'roles/run.admin': ['run.services.create'],
 };
@@ -77,18 +77,18 @@ async function setup() {
   return { snapshot, view: buildViewGraph(snapshot) };
 }
 
-describe('matchesRole', () => {
-  it('大文字小文字を区別せず、空白区切りのすべての語を含むロールに一致する', () => {
-    expect(matchesRole('roles/storage.objectViewer', 'STORAGE viewer')).toBe(true);
-    expect(matchesRole('roles/storage.admin', 'storage viewer')).toBe(false);
-    expect(matchesRole('roles/storage.admin', '  ')).toBe(false);
+describe('matchesTerms', () => {
+  it('大文字小文字を区別せず、空白区切りのすべての語を含むものに一致する', () => {
+    expect(matchesTerms('roles/storage.objectViewer', 'STORAGE viewer')).toBe(true);
+    expect(matchesTerms('roles/storage.admin', 'storage viewer')).toBe(false);
+    expect(matchesTerms('roles/storage.admin', '  ')).toBe(false);
   });
 });
 
 describe('searchRoles', () => {
   it('一致したロールごとに、到達できる Workload・付与・リソース数をまとめる', async () => {
     const { snapshot, view } = await setup();
-    const matches = searchRoles(snapshot, view, 'storage');
+    const matches = searchAccess(snapshot, view, 'storage');
 
     expect(matches.map((m) => m.role)).toEqual(['roles/storage.admin', 'roles/storage.objectViewer']);
     expect(matches[0]).toMatchObject({
@@ -102,14 +102,14 @@ describe('searchRoles', () => {
 
   it('WIF から到達できない identity の付与は含めない', async () => {
     const { snapshot, view } = await setup();
-    const [admin] = searchRoles(snapshot, view, 'storage.admin');
+    const [admin] = searchAccess(snapshot, view, 'storage.admin');
 
     expect(admin?.grants.map((g) => g.identity)).toEqual([sa('deploy')]);
   });
 
   it('SA への付与は SA ノードに対応づける', async () => {
     const { snapshot, view } = await setup();
-    const [wifUser] = searchRoles(snapshot, view, 'workloadIdentityUser');
+    const [wifUser] = searchAccess(snapshot, view, 'workloadIdentityUser');
 
     // principal ごとに別の付与として数え、表示上は付与先の SA ノードに対応づける
     expect(wifUser?.grants.map((g) => [g.identity, g.viewNodeId])).toEqual([
@@ -122,19 +122,57 @@ describe('searchRoles', () => {
   it('一致しない場合は空', async () => {
     const { snapshot, view } = await setup();
 
-    expect(searchRoles(snapshot, view, 'bigquery')).toEqual([]);
+    expect(searchAccess(snapshot, view, 'bigquery')).toEqual([]);
   });
 });
 
 describe('roleFocus', () => {
   it('付与先を強調し、一致したロールで到達できるリソースのまとまりだけを含める', async () => {
     const { snapshot, view } = await setup();
-    const storage = roleFocus(searchRoles(snapshot, view, 'storage.admin'), view);
-    const run = roleFocus(searchRoles(snapshot, view, 'run.admin'), view);
+    const storage = roleFocus(searchAccess(snapshot, view, 'storage.admin'), view);
+    const run = roleFocus(searchAccess(snapshot, view, 'run.admin'), view);
 
     expect(storage.highlight).toEqual([grantNodeId(sa('deploy'), PROJECT)]);
     expect(storage.upstreamFrom).toContain(`rg|${sa('deploy')}|${PROJECT}|storage.googleapis.com/Bucket`);
     // run.admin と同じ付与先にあるバケットは、run.admin では操作できないので含めない
     expect(run.upstreamFrom).toEqual([grantNodeId(sa('deploy'), PROJECT)]);
+  });
+});
+
+describe('searchAccess（permission）', () => {
+  it('一致する permission を含むロールを列挙し、一致した permission と対象アセットタイプを付ける', async () => {
+    const { snapshot, view } = await setup();
+    const matches = searchAccess(snapshot, view, 'storage.objects', 'permission');
+
+    expect(matches.map((m) => [m.role, m.matchedPermissions, m.assetTypes])).toEqual([
+      ['roles/storage.admin', ['storage.objects.delete'], ['storage.googleapis.com/Bucket']],
+      ['roles/storage.objectViewer', ['storage.objects.get'], ['storage.googleapis.com/Bucket']],
+    ]);
+  });
+
+  it('リソースに展開できない permission では、リソースを数えずグラフにも出さない', async () => {
+    const { snapshot, view } = await setup();
+    const matches = searchAccess(snapshot, view, 'resourcemanager.projects.get', 'permission');
+
+    expect(matches).toMatchObject([{ role: 'roles/storage.admin', assetTypes: [], resourceCount: 0 }]);
+    expect(roleFocus(matches, view).upstreamFrom).toEqual([grantNodeId(sa('deploy'), PROJECT)]);
+  });
+
+  it('ロールの検索と同様に、WIF から到達できない付与は含めない', async () => {
+    const { snapshot, view } = await setup();
+    const [admin] = searchAccess(snapshot, view, 'storage.objects.delete', 'permission');
+
+    expect(admin?.grants.map((g) => g.identity)).toEqual([sa('deploy')]);
+  });
+});
+
+describe('reachableRolesAndPermissions', () => {
+  it('WIF から到達できるロールと、その permission を入力候補として返す', async () => {
+    const { snapshot } = await setup();
+    const { roles: reachableRoles, permissions } = reachableRolesAndPermissions(snapshot);
+
+    expect(reachableRoles).toEqual(['roles/iam.workloadIdentityUser', 'roles/run.admin', 'roles/storage.admin', 'roles/storage.objectViewer']);
+    expect(permissions).toContain('storage.objects.delete');
+    expect(permissions).toEqual([...permissions].sort());
   });
 });
