@@ -130,7 +130,9 @@ code {
 
 .tabs button {
   flex: 1;
-  padding: 10px 8px;
+  padding: 10px 6px;
+  white-space: nowrap;
+  font-size: 13px;
   border: none;
   background: none;
   cursor: pointer;
@@ -415,4 +417,116 @@ code {
 
 .react-flow__edge-text {
   fill: var(--text);
+}
+
+.role-search ol {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+}
+
+.search-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.search-field input {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.search-field input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.hint {
+  font-size: 12px;
+  padding: 6px 12px 0;
+  margin: 0;
+}
+
+.role-match {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.role-match:hover,
+.role-match.selected {
+  border-color: var(--accent);
+}
+
+.role-match.selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.role-name {
+  overflow-wrap: anywhere;
+}
+
+.role-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+
+.segmented {
+  display: flex;
+  margin: 12px 12px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.segmented button {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 6px;
+  cursor: pointer;
+}
+
+.segmented button[aria-checked='true'] {
+  background: var(--accent);
+  color: #fff;
+}
+
+.matched-permissions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.matched-permissions code {
+  background: var(--bg);
+  border-radius: 4px;
+  padding: 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.show-more {
+  font-size: 12px;
+  margin: -2px 0 8px;
 }
