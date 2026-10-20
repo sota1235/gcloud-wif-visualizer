@@ -9,3 +9,5 @@ export * from './snapshot.ts';
 export * from './asset-types.ts';
 export * from './cel.ts';
 export * from './workload.ts';
+export * from './lint.ts';
+export * from './diff.ts';

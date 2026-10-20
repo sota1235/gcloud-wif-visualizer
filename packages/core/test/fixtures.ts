@@ -29,6 +29,8 @@ export const roles: Record<string, string[]> = {
   'roles/iam.serviceAccountKeyAdmin': ['iam.serviceAccountKeys.create', 'iam.serviceAccountKeys.delete'],
   'roles/storage.admin': ['storage.buckets.get', 'storage.objects.get'],
   'roles/viewer': ['resourcemanager.projects.get', 'storage.buckets.list'],
+  'roles/owner': ['resourcemanager.projects.setIamPolicy', 'storage.buckets.get'],
+  'roles/editor': ['storage.buckets.get', 'run.services.create'],
   'roles/resourcemanager.projectIamAdmin': ['resourcemanager.projects.getIamPolicy', 'resourcemanager.projects.setIamPolicy'],
   'organizations/1/roles/customImpersonator': ['iam.serviceAccounts.getAccessToken'],
   'organizations/1/roles/customDeployer': ['run.services.create', 'iam.serviceAccounts.actAs'],

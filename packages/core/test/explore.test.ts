@@ -110,6 +110,18 @@ describe('explore', () => {
     expect(explored.depth.has(saMember('admin', 'b'))).toBe(false);
   });
 
+  it('actAs 先の SA はバインディングを取得するが、実効アクセスには含めない', async () => {
+    const { explored, access } = await run([
+      wifUser(saResource('deploy')),
+      { resource: PROJECT_B, role: 'organizations/1/roles/customDeployer', member: saMember('deploy') },
+      { resource: ORG, role: 'roles/viewer', member: saMember('admin', 'b') },
+    ]);
+
+    expect(explored.actAsOnly).toEqual(new Set([saMember('admin', 'b'), saMember('other', 'b')]));
+    expect(explored.bindings).toContainEqual({ resource: ORG, role: 'roles/viewer', member: saMember('admin', 'b') });
+    expect(access.some((a) => a.path.includes(saMember('admin', 'b')))).toBe(false);
+  });
+
   it('SA の鍵を作れるロールは impersonation とみなす', async () => {
     const { explored } = await run([
       wifUser(saResource('deploy')),

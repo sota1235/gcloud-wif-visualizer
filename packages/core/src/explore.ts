@@ -17,6 +17,8 @@ export interface ExploreResult {
   depth: Map<Member, number>;
   /** maxDepth に達したため、バインディングを取得しなかった SA */
   truncated: Set<Member>;
+  /** actAs でのみ到達する SA。権限の強さを判定するためバインディングは取得するが、その先は辿らない */
+  actAsOnly: Set<Member>;
 }
 
 /**
@@ -107,10 +109,17 @@ export async function explore(principals: Member[], source: AccessSource, option
     frontier = next;
   }
 
+  const actAsOnly = new Set(
+    [...serviceAccountEdges.values()].filter((e) => e.kind === 'CAN_ACT_AS' && !depth.has(e.to)).map((e) => e.to),
+  );
+  const actAsBindings = await Promise.all([...actAsOnly].map((sa) => source.bindingsForMember(sa)));
+  bindings.push(...actAsBindings.flat());
+
   return {
     bindings,
     serviceAccountEdges: [...serviceAccountEdges.values()].sort((a, b) => a.id.localeCompare(b.id)),
     depth,
     truncated,
+    actAsOnly,
   };
 }
