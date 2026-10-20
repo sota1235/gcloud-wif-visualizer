@@ -1,4 +1,4 @@
-# gcloud-wif-visualizer 仕様（ドラフト v0.8）
+# gcloud-wif-visualizer 仕様（ドラフト v0.9）
 
 ## 1. 目的
 
@@ -92,6 +92,16 @@ wif-viz diff old.json new.json [--format text|json|markdown]
 
 - 収集と表示を分離する。表示時に GCP 認証が不要になり、スナップショットの保存・共有・差分比較ができる。
 - 認証は Application Default Credentials を使う。
+- 現状（v0.9）は `pnpm wif-viz collect` / `pnpm wif-viz serve` として tsx で実行する。`serve` は Vite の開発サーバーをプログラムから起動し、`/api/snapshot` でスナップショットを返す。配布用のビルドは後続。
+
+### collector の実装方針
+
+- インベントリ（展開対象のアセットタイプ。SA を含む）、container、WIF のバインディングは Org 全体で 1 回ずつ取得する。SA 単位の `searchAllIamPolicies` だけが探索中に発生する。
+- `serviceAccountsUnder` は API を呼ばず、インベントリの SA を container の祖先で絞り込む。
+- API 呼び出しは同時実行数を制限し（デフォルト 8）、RESOURCE_EXHAUSTED / UNAVAILABLE / 429 / 5xx を指数バックオフでリトライする。
+- 「存在しない SA」とみなすのは、Org 内の project に属する SA（`{projectId}.iam.gserviceaccount.com`）でインベントリにないものだけ。Google 管理の SA や他の Org の SA は誤検知を避けるため対象外にする。
+- ロール定義が取得できない場合は permission なしとして扱い、警告を出して続行する。
+- 実データ（10 project）での収集時間は約 18 秒（PoC では約 41 秒）。
 
 ### 収集フロー（collect）
 
@@ -241,6 +251,14 @@ MVP では、実際にデプロイできるかまでは判定せず、**actAs �
 - **テーブルビュー**: EffectiveAccess の一覧。CSV でエクスポートできる。
 - **対応推奨リスト**: Lint の結果を「やることリスト」として見せる画面（下記）。
 - **差分モード**: 8 章のとおり。
+
+### 表示用グラフ（v0.9 の実装）
+
+- ノードは Workload / principal / SA / 付与先（grant）/ リソースのまとまり（resourceGroup）。
+- **付与先は「identity × 付与箇所」ごとに別ノードにする。** container を identity 間で共有すると、経路を辿ったときに別の identity の権限まで含まれてしまうため。
+- **検出結果を選んだときの表示範囲は、原因に応じて絞る。** バインディングが原因ならその付与の先だけ、経路が原因なら終点の先だけを辿る。Provider が原因の場合は、その Provider から推定したワークロードを起点にする。
+- 概観表示は Workload → principal → SA（impersonation）の層だけを表示する。
+- 詳細パネルには、SA が持つロールの付与一覧を表示する（actAs 先の SA がなぜ「強い権限」なのかを確認するため）。
 
 ### 対応推奨リスト
 
