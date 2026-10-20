@@ -1,4 +1,5 @@
 import type { ExploreResult } from './explore.ts';
+import { inferWorkloads, type InferOptions } from './workload.ts';
 import {
   edgeId,
   isContainerResource,
@@ -25,6 +26,7 @@ export interface BuildGraphInput {
   explored: ExploreResult;
   /** Org 内に存在する SA の email。指定した場合、含まれない SA を missing として扱う */
   existingServiceAccounts?: ReadonlySet<string>;
+  inferOptions?: InferOptions;
 }
 
 /** HAS_ROLE の付与先ノード ID。SA は member 形式に揃え、identity としての SA ノードと同一視する */
@@ -88,6 +90,16 @@ export function buildAccessGraph(input: BuildGraphInput): AccessGraph {
       ...(binding.condition ? { condition: binding.condition } : {}),
     };
     edges.set(id, edge);
+  }
+
+  // principal ごとに、pool の provider からワークロードを推定する
+  const principals = [...nodes.values()].filter((n) => n.kind === 'principal');
+  for (const principal of principals) {
+    for (const workload of inferWorkloads(principal, input.providers, input.inferOptions)) {
+      addNode({ kind: 'workload', id: workload.id, workload });
+      const id = edgeId('RESOLVES_TO', workload.id, principal.id);
+      edges.set(id, { kind: 'RESOLVES_TO', id, from: workload.id, to: principal.id, provider: workload.provider });
+    }
   }
 
   return { nodes, edges };

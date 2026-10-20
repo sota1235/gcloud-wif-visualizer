@@ -6,3 +6,5 @@ export * from './explore.ts';
 export * from './graph.ts';
 export * from './effective.ts';
 export * from './snapshot.ts';
+export * from './cel.ts';
+export * from './workload.ts';

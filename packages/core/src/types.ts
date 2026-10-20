@@ -1,3 +1,5 @@
+import type { Workload } from './workload.ts';
+
 // ---- collector から渡される入力（GCP API のレスポンスを正規化したもの） ----
 
 /** IAM の member 文字列（`serviceAccount:...`、`principalSet://...` など） */
@@ -60,9 +62,16 @@ export interface MemberBinding {
 
 // ---- グラフ ----
 
-export type NodeKind = 'pool' | 'provider' | 'principal' | 'serviceAccount' | 'container' | 'resource';
+export type NodeKind = 'workload' | 'pool' | 'provider' | 'principal' | 'serviceAccount' | 'container' | 'resource';
 
 export type PrincipalKind = 'subject' | 'group' | 'attribute' | 'all';
+
+/** principal と provider の設定から推定した外部ワークロード */
+export interface WorkloadNode {
+  kind: 'workload';
+  id: string;
+  workload: Workload;
+}
 
 export interface PoolNode {
   kind: 'pool';
@@ -112,14 +121,20 @@ export interface ResourceNode {
   assetType?: string;
 }
 
-export type GraphNode = PoolNode | ProviderNode | PrincipalNode | ServiceAccountNode | ContainerNode | ResourceNode;
+export type GraphNode = WorkloadNode | PoolNode | ProviderNode | PrincipalNode | ServiceAccountNode | ContainerNode | ResourceNode;
 
-export type EdgeKind = 'TRUSTS' | 'CAN_IMPERSONATE' | 'CAN_ACT_AS' | 'HAS_ROLE';
+export type EdgeKind = 'RESOLVES_TO' | 'TRUSTS' | 'CAN_IMPERSONATE' | 'CAN_ACT_AS' | 'HAS_ROLE';
 
 interface EdgeBase {
   id: string;
   from: string;
   to: string;
+}
+
+/** workload → principal（どの provider 経由かを保持する） */
+export interface ResolvesToEdge extends EdgeBase {
+  kind: 'RESOLVES_TO';
+  provider: string;
 }
 
 /** provider → pool */
@@ -145,7 +160,7 @@ export interface ServiceAccountEdge extends EdgeBase {
   condition?: IamCondition;
 }
 
-export type GraphEdge = TrustsEdge | HasRoleEdge | ServiceAccountEdge;
+export type GraphEdge = ResolvesToEdge | TrustsEdge | HasRoleEdge | ServiceAccountEdge;
 
 export interface AccessGraph {
   nodes: Map<string, GraphNode>;
