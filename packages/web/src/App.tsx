@@ -4,9 +4,11 @@ import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
 import { focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
 import { GraphView } from './GraphView.tsx';
+import { roleFocus, searchRoles } from './role-search.ts';
+import { RoleSearch } from './RoleSearch.tsx';
 import { buildViewGraph, findingFocus } from './view-graph.ts';
 
-type Tab = 'findings' | 'workloads';
+type Tab = 'findings' | 'workloads' | 'roles';
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -16,6 +18,8 @@ export function App() {
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
   const [focusIds, setFocusIds] = useState<string[] | null>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [roleQuery, setRoleQuery] = useState('');
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/snapshot')
@@ -28,7 +32,15 @@ export function App() {
 
   const findings = useMemo(() => (snapshot ? findingsOf(snapshot) : []), [snapshot]);
   const view = useMemo(() => (snapshot ? buildViewGraph(snapshot, findings) : null), [snapshot, findings]);
-  const focus = useMemo(() => (view && selectedFinding ? findingFocus(selectedFinding, view) : null), [view, selectedFinding]);
+  const reachableRoles = useMemo(() => (snapshot ? [...new Set(snapshot.effectiveAccess.map((r) => r.role))].sort() : []), [snapshot]);
+  const roleMatches = useMemo(() => (snapshot && view ? searchRoles(snapshot, view, roleQuery) : []), [snapshot, view, roleQuery]);
+  const roleSearchActive = tab === 'roles' && !focusIds && roleMatches.length > 0;
+  const focus = useMemo(() => {
+    if (!view) return null;
+    if (selectedFinding) return findingFocus(selectedFinding, view);
+    if (roleSearchActive) return roleFocus(selectedRole ? roleMatches.filter((m) => m.role === selectedRole) : roleMatches, view);
+    return null;
+  }, [view, selectedFinding, roleSearchActive, roleMatches, selectedRole]);
   const displayed = useMemo(() => {
     if (!view) return null;
     if (focus) return pathSubgraph(view, focus.upstreamFrom, focus.downstreamFrom);
@@ -42,6 +54,7 @@ export function App() {
   const selectFinding = (finding: Finding) => {
     setSelectedFinding(finding);
     setFocusIds(null);
+    setSelectedRole(null);
     setSelectedNodeId(null);
   };
   const focusOn = (id: string) => {
@@ -50,6 +63,15 @@ export function App() {
     setSelectedNodeId(id);
   };
   const showOverview = () => {
+    setSelectedFinding(null);
+    setFocusIds(null);
+    setSelectedNodeId(null);
+    setRoleQuery('');
+    setSelectedRole(null);
+  };
+  const switchTab = (next: Tab) => {
+    setTab(next);
+    // 別のタブの選択状態がグラフに残らないようにする
     setSelectedFinding(null);
     setFocusIds(null);
     setSelectedNodeId(null);
@@ -65,18 +87,21 @@ export function App() {
           {snapshot.org.displayName ?? snapshot.org.id} ・ {new Date(snapshot.collectedAt).toLocaleString('ja-JP')} 時点
         </span>
         <span className="spacer" />
-        <button type="button" className="link" onClick={showOverview} disabled={!focusIds && !selectedFinding}>
+        <button type="button" className="link" onClick={showOverview} disabled={!focusIds && !selectedFinding && !roleSearchActive}>
           概観に戻る
         </button>
       </header>
 
       <nav className="sidebar" aria-label="対応推奨リストとワークロード">
         <div className="tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === 'findings'} onClick={() => setTab('findings')}>
+          <button type="button" role="tab" aria-selected={tab === 'findings'} onClick={() => switchTab('findings')}>
             対応推奨リスト（{findings.length}）
           </button>
-          <button type="button" role="tab" aria-selected={tab === 'workloads'} onClick={() => setTab('workloads')}>
+          <button type="button" role="tab" aria-selected={tab === 'workloads'} onClick={() => switchTab('workloads')}>
             ワークロード（{workloads.length}）
+          </button>
+          <button type="button" role="tab" aria-selected={tab === 'roles'} onClick={() => switchTab('roles')}>
+            ロール
           </button>
         </div>
         {tab === 'findings' ? (
@@ -94,6 +119,16 @@ export function App() {
               })
             }
           />
+        ) : tab === 'roles' ? (
+          <RoleSearch
+            query={roleQuery}
+            onQueryChange={setRoleQuery}
+            roles={reachableRoles}
+            matches={roleMatches}
+            selectedRole={selectedRole}
+            onSelectRole={setSelectedRole}
+            view={view}
+          />
         ) : (
           <ul className="workload-list">
             {workloads.map((w) => (
@@ -110,7 +145,13 @@ export function App() {
 
       <main className="graph">
         <div className="graph-caption">
-          {selectedFinding ? `検出結果の経路: ${selectedFinding.ruleId}` : focusIds ? 'フォーカス表示' : '概観（Workload → principal → SA）'}
+          {selectedFinding
+            ? `検出結果の経路: ${selectedFinding.ruleId}`
+            : roleSearchActive
+              ? `ロールの経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}`
+              : focusIds
+                ? 'フォーカス表示'
+                : '概観（Workload → principal → SA）'}
           <span className="muted"> ・ ノード {displayed.nodes.size}</span>
         </div>
         <GraphView graph={displayed} highlightIds={highlightIds} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
