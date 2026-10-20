@@ -4,7 +4,7 @@ import { explore } from '../src/explore.ts';
 import { buildAccessGraph } from '../src/graph.ts';
 import { createSnapshot, parseSnapshot, snapshotToGraph } from '../src/snapshot.ts';
 import { createStaticSource } from '../src/source.ts';
-import { containers, PROJECT_A, REPO_PRINCIPAL, saMember, saResource, source } from './fixtures.ts';
+import { containers, PROJECT_A, REPO_PRINCIPAL, roles, saMember, saResource, source } from './fixtures.ts';
 
 async function snapshot() {
   const explored = await explore(
@@ -22,8 +22,9 @@ async function snapshot() {
     org: { id: '1' },
     collectedAt: new Date('2026-10-19T00:00:00Z'),
     options: { maxDepth: 5 },
+    roles,
     graph,
-    effectiveAccess: computeEffectiveAccess(graph),
+    effectiveAccess: computeEffectiveAccess(graph, { inventory: [], rolePermissions: roles }),
   });
 }
 

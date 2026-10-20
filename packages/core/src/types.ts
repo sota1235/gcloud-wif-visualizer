@@ -179,12 +179,35 @@ export interface EffectiveAccess {
   role: string;
   /** バインディングがある箇所 */
   grantedOn: FullResourceName;
-  /** 展開後の実リソース（展開していない場合は grantedOn と同じ） */
-  resource: FullResourceName;
-  assetType?: string;
-  expanded: boolean;
+  /** grantedOn が container（org / folder / project）か、個別のリソースか */
+  grantedOnKind: 'container' | 'resource';
+  /**
+   * このロールで操作できる実リソース。
+   * grantedOn が個別のリソースならそれ自身、container なら配下のうち対応表で判定したアセットタイプのもの
+   */
+  resources: AccessibleResource[];
+  /** 対応表でアセットタイプに展開できなかった permission の数（container 単位の権限として扱う） */
+  unmappedPermissionCount: number;
   /** 経路上に IAM Condition があるか */
   conditional: boolean;
+}
+
+export interface AccessibleResource {
+  name: FullResourceName;
+  assetType?: string;
+}
+
+/** Cloud Asset の searchAllResources で取得したリソース（展開に使う） */
+export interface InventoryResource {
+  name: FullResourceName;
+  assetType: string;
+  /** `projects/{number}` */
+  project?: string;
+  /** `folders/{id}`（祖先すべて） */
+  folders: string[];
+  /** `organizations/{id}` */
+  organization?: string;
+  displayName?: string;
 }
 
 export const SNAPSHOT_SCHEMA_VERSION = 1;
@@ -194,6 +217,8 @@ export interface Snapshot {
   collectedAt: string;
   org: { id: string; displayName?: string };
   options: { maxDepth: number };
+  /** 出現したロール → permission（Lint や UI の表示に使う） */
+  roles: Record<string, string[]>;
   nodes: GraphNode[];
   edges: GraphEdge[];
   effectiveAccess: EffectiveAccess[];

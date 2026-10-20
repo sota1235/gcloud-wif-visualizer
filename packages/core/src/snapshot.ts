@@ -4,6 +4,7 @@ export interface CreateSnapshotInput {
   org: Snapshot['org'];
   collectedAt: Date;
   options: Snapshot['options'];
+  roles: Snapshot['roles'];
   graph: AccessGraph;
   effectiveAccess: EffectiveAccess[];
 }
@@ -16,6 +17,7 @@ export function createSnapshot(input: CreateSnapshotInput): Snapshot {
     collectedAt: input.collectedAt.toISOString(),
     org: input.org,
     options: input.options,
+    roles: Object.fromEntries(Object.entries(input.roles).sort(([a], [b]) => a.localeCompare(b))),
     nodes: [...input.graph.nodes.values()].sort(byId),
     edges: [...input.graph.edges.values()].sort(byId),
     effectiveAccess: [...input.effectiveAccess].sort(byId),

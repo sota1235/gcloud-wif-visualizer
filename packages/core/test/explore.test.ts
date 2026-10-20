@@ -4,19 +4,19 @@ import { explore } from '../src/explore.ts';
 import { buildAccessGraph } from '../src/graph.ts';
 import { createStaticSource } from '../src/source.ts';
 import type { MemberBinding } from '../src/types.ts';
-import { containers, FOLDER, ORG, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, sa, saMember, saResource, source } from './fixtures.ts';
+import { containers, FOLDER, ORG, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, roles, sa, saMember, saResource, source } from './fixtures.ts';
 
 const BUCKET = '//storage.googleapis.com/projects/_/buckets/data';
 
 async function run(bindings: MemberBinding[], maxDepth = 5) {
   const explored = await explore([REPO_PRINCIPAL], createStaticSource(source(bindings)), { maxDepth });
   const graph = buildAccessGraph({ pools: [], providers: [], containers, explored });
-  return { explored, graph, access: computeEffectiveAccess(graph) };
+  return { explored, graph, access: computeEffectiveAccess(graph, { inventory: [], rolePermissions: roles }) };
 }
 
 const wifUser = (target: string): MemberBinding => ({ resource: target, role: 'roles/iam.workloadIdentityUser', member: REPO_PRINCIPAL });
 const summarize = (access: Awaited<ReturnType<typeof run>>['access']) =>
-  access.map((a) => ({ path: a.path, role: a.role, resource: a.resource, conditional: a.conditional }));
+  access.map((a) => ({ path: a.path, role: a.role, grantedOn: a.grantedOn, conditional: a.conditional }));
 
 describe('explore', () => {
   it('principal → SA → リソースの経路を求める', async () => {
@@ -28,7 +28,7 @@ describe('explore', () => {
     expect(summarize(access)).toContainEqual({
       path: [REPO_PRINCIPAL, saMember('deploy')],
       role: 'roles/storage.admin',
-      resource: PROJECT_A,
+      grantedOn: PROJECT_A,
       conditional: false,
     });
   });
@@ -36,7 +36,7 @@ describe('explore', () => {
   it('principal に直接付与されたロールも実効アクセスになる', async () => {
     const { access } = await run([{ resource: BUCKET, role: 'roles/storage.admin', member: REPO_PRINCIPAL }]);
 
-    expect(summarize(access)).toEqual([{ path: [REPO_PRINCIPAL], role: 'roles/storage.admin', resource: BUCKET, conditional: false }]);
+    expect(summarize(access)).toEqual([{ path: [REPO_PRINCIPAL], role: 'roles/storage.admin', grantedOn: BUCKET, conditional: false }]);
   });
 
   it('多段の impersonation を辿る', async () => {
@@ -50,7 +50,7 @@ describe('explore', () => {
     expect(summarize(access)).toContainEqual({
       path: [REPO_PRINCIPAL, saMember('deploy'), saMember('admin', 'b')],
       role: 'roles/viewer',
-      resource: ORG,
+      grantedOn: ORG,
       conditional: false,
     });
   });
