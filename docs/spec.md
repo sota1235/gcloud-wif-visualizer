@@ -1,4 +1,4 @@
-# gcloud-wif-visualizer 仕様（ドラフト v0.6）
+# gcloud-wif-visualizer 仕様（ドラフト v0.7）
 
 ## 1. 目的
 
@@ -61,16 +61,19 @@ Workload ──▶ Provider ──▶ Principal ─┬─(impersonate)──▶ 
 
 ```ts
 type EffectiveAccess = {
-  workloadId: string;      // 推定 Workload（不明な場合は Principal）
-  principal: string;
+  principal: string;       // 起点の WIF principal（Workload とは RESOLVES_TO エッジで対応づける）
   path: string[];          // 例: [principal, sa1@, sa2@]（impersonation の連鎖）
   role: string;
-  grantedOn: string;       // バインディングがある箇所（例: projects/foo）
-  resource: string;        // 展開後の実リソース（展開できなかったものは grantedOn と同じ）
-  expanded: boolean;       // 実リソースまで展開できたか
+  grantedOn: string;       // バインディングがある箇所（例: //cloudresourcemanager.googleapis.com/projects/foo）
+  grantedOnKind: 'container' | 'resource';
+  resources: { name: string; assetType?: string }[];  // このロールで操作できる実リソース（7 章）
+  unmappedPermissionCount: number;  // 対応表で展開できなかった permission の数
   conditional: boolean;    // 経路上に IAM Condition があるか
 };
 ```
+
+- **1 行 = 1 つの付与（経路 × ロール × 付与箇所）とし、展開した実リソースは行の中に一覧で持つ。** 行を実リソースごとに分けると、org レベルの付与で行数が爆発するため。
+- 条件だけが異なる同じ付与は 1 行にまとめ、条件なしの付与が 1 つでもあれば `conditional: false` とする。
 
 ### 注意点
 
@@ -118,7 +121,8 @@ wif-viz diff old.json new.json [--format text|json|markdown]
   "schemaVersion": 1,
   "collectedAt": "2026-10-19T00:00:00Z",
   "org": { "id": "123", "displayName": "example.com" },
-  "options": { "maxDepth": 5, "expandAssetTypes": ["..."] },
+  "options": { "maxDepth": 5 },
+  "roles": { "roles/viewer": ["..."] },   // 出現したロール → permission（Lint と UI で使う）
   "nodes": [...], "edges": [...],
   "effectiveAccess": [...],
   "findings": [...]   // Lint 結果
@@ -183,7 +187,9 @@ container（org / folder / project）に付与されたロールを、配下の�
 
 Cloud Storage バケット、BigQuery データセット/テーブル、Secret Manager シークレット、Artifact Registry リポジトリ、Cloud Run サービス/ジョブ、Cloud Functions、Pub/Sub トピック/サブスクリプション、Compute インスタンス、GKE クラスタ、Cloud SQL インスタンス、KMS キー、Service Account
 
-- 対応表にないものは container 単位のまま表示する（`expanded: false`）。
+- 対応表にない permission は、container 単位の権限として**数だけ**を記録する（`unmappedPermissionCount`）。predefined ロールのほとんどは `resourcemanager.projects.get` のような周辺の permission を含むため、それらを行として残すと付与ごとに重複が生じる。
+- 個別のリソースへの付与（バケットの IAM など）は、そのリソースだけを対象にする。SA も実リソースの 1 つとして扱う。
+- 実データで、core の実装と PoC の自前方式（(a)）の結果が一致することを確認した。差分は SA リソースへの付与 5 件だけで、これは PoC では意図的に除外していたもの。
 - 展開後の行数が膨らむため、UI ではデフォルトで「アセットタイプ × container」に集約して表示し、ドリルダウンで個別のリソースを見せる。
 
 ### Policy Analyzer との比較（PoC 結果）
