@@ -1,4 +1,4 @@
-# gcloud-wif-visualizer 仕様（ドラフト v0.7）
+# gcloud-wif-visualizer 仕様（ドラフト v0.8）
 
 ## 1. 目的
 
@@ -124,12 +124,12 @@ wif-viz diff old.json new.json [--format text|json|markdown]
   "options": { "maxDepth": 5 },
   "roles": { "roles/viewer": ["..."] },   // 出現したロール → permission（Lint と UI で使う）
   "nodes": [...], "edges": [...],
-  "effectiveAccess": [...],
-  "findings": [...]   // Lint 結果
+  "effectiveAccess": [...]
 }
 ```
 
 - ノードとエッジの ID は GCP のリソース名から決定的に生成する（差分で比較できるようにするため）。
+- Lint の結果はスナップショットに保存せず、読み込むたびに算出する。ルールを改善したときに、過去のスナップショットにも反映するため。
 - 機密情報を含むため、デフォルトで `.gitignore` 対象にする。
 
 ## 6. Workload の推定（GitHub Actions）
@@ -217,13 +217,16 @@ MVP では、実際にデプロイできるかまでは判定せず、**actAs �
 - container レベルの付与は、impersonation と同じく配下の全 SA に展開する。
 - `CAN_ACT_AS` は探索の対象にせず、EffectiveAccess にも含めない。actAs 先の SA が持つ権限は「潜在的に到達できる権限」として、詳細パネルで参考表示する。
 - Lint `act-as-reachable` で警告し、対応推奨リスト（9 章）に載せる。
+- actAs 先の SA が強い権限を持つかを判定するため、actAs 先の SA のバインディングも取得する（そこから先は辿らない）。
 
 ## 8. 差分（diff）
 
 - **比較単位**:
-  - EffectiveAccess の行の追加・削除（キーは workloadId + resource + role + path）
-  - 設定の変更（Provider の mapping / condition、Pool / Provider の有効・無効）
-  - Lint の新規発生・解消
+  - EffectiveAccess の行の追加・削除（キーは principal + 付与箇所 + role + path）
+  - 同じ行で、到達できるリソースが増減した場合や、IAM Condition の有無が変わった場合は「変更」として扱う
+  - 設定の変更（Provider / Pool）。変更されたフィールド名を付ける
+  - Lint の新規発生・解消（Finding の ID で比較する）
+- 異なる Org のスナップショットは比較しない。
 - **CLI**: `wif-viz diff` で text / json / markdown（PR や Slack に貼る用）を出力する。
 - **UI**: `serve --base` で差分モードにし、追加された経路を緑、削除された経路を赤でハイライトする。差分の行だけを表示するフィルタを用意する。
 - スナップショットの `schemaVersion` が異なる場合はエラーにする（マイグレーションは後続）。
@@ -269,6 +272,16 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 | `dangling-principal` | 存在しない Pool を参照するバインディングがある | medium | 不要なバインディングを削除する |
 | `iam-admin-reachable` | WIF 経由で IAM を書き換えられるロール（`*.setIamPolicy`、`resourcemanager.organizationAdmin`、`resourcemanager.projectIamAdmin`、`iam.serviceAccountAdmin`、`iam.workloadIdentityPoolAdmin` など）に到達できる。実質的に権限を際限なく拡大できる | high | 付与範囲を限定する、environment の保護ルール（required reviewers）を必須にする |
 | `github-actor-based-trust` | condition が `actor`（ユーザー名）に依存している。actor は名前ベースで、workflow の再実行者によっても変わる | low | owner / repo の ID と environment で制限する |
+| `unreachable-principal` | principal の値が Provider の attributeCondition と矛盾し、バインディングが使われない | low | 不要なバインディングを削除する（設定ミスの可能性もある） |
+
+### Lint の実装方針
+
+- **検出結果（Finding）は原因ごとに 1 件にまとめる。** 原因は、バインディング（identity × ロール × 付与箇所）、Provider、principal、経路のいずれか。
+- **影響範囲を付ける。** 影響を受ける principal、Workload、リソース数を持たせ、対応推奨リストの表示と並び順に使う。
+- **並び順は重要度 → 影響するリソース数 → ID。** ID はルールと原因から決定的に作り、トリアージ状態の保存と差分に使う。
+- **`iam-admin-reachable` は permission で判定する。** 判定に使う permission は、`resourcemanager.{organizations,folders,projects}.setIamPolicy`、`iam.serviceAccounts.setIamPolicy`、`iam.roles.create/update`、`iam.workloadIdentityPools.update`、`iam.workloadIdentityPoolProviders.create/update`。`roles/owner` / `roles/editor` は `primitive-role` だけで報告する。
+- **WIF から到達できるかは、実効アクセスの行ではなくグラフを辿って判定する。** ロールを持たない SA（削除済みの SA など）を対象に含めるため。
+- 実データで検出された主な経路: `roles/owner` に含まれる `iam.serviceAccountKeys.create` により、同じ project の SA に成り代われる経路（`deep-impersonation-chain`）。PoC では見落としていた。
 
 ## 10. 技術スタック（案）
 
