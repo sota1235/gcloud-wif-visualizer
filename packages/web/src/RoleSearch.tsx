@@ -12,6 +12,9 @@ interface Props {
   matches: RoleMatch[];
   selectedRole: string | null;
   onSelectRole: (role: string | null) => void;
+  /** 選択中のロールの経路を、さらに絞り込むワークロード */
+  selectedWorkload: string | null;
+  onSelectWorkload: (workloadId: string | null) => void;
   view: ViewGraph;
 }
 
@@ -29,7 +32,7 @@ const PERMISSION_PREVIEW = 3;
 const identityLabel = (identity: string) =>
   identity.includes('workloadIdentityPools/') ? identity.replace(/^.*workloadIdentityPools\//, '') : shortServiceAccount(identity);
 
-export function RoleSearch({ mode, onModeChange, query, onQueryChange, candidates, matches, selectedRole, onSelectRole, view }: Props) {
+export function RoleSearch({ mode, onModeChange, query, onQueryChange, candidates, matches, selectedRole, onSelectRole, selectedWorkload, onSelectWorkload, view }: Props) {
   const current = MODES.find((m) => m.mode === mode)!;
   const [showAllPermissions, setShowAllPermissions] = useState(false);
   const suggestions = (query.trim() === '' ? candidates : candidates.filter((c) => matchesTerms(c, query))).slice(0, MAX_SUGGESTIONS);
@@ -105,21 +108,29 @@ export function RoleSearch({ mode, onModeChange, query, onQueryChange, candidate
                   {match.assetTypes && match.assetTypes.length === 0 && '（リソース単位に展開できない permission）'}
                   {match.assetTypes && match.assetTypes.length > 0 && `（${match.assetTypes.map(shortAssetType).join(', ')}）`}
                 </span>
-                {selected && (
-                  <span className="role-detail">
-                    <span className="muted">Workload</span>
-                    {match.workloads.map((id) => (
-                      <span key={id}>{view.nodes.get(id)?.label ?? id}</span>
-                    ))}
-                    <span className="muted">付与</span>
-                    {match.grants.map((g) => (
-                      <code key={g.viewNodeId + g.identity} className="wrap">
-                        {identityLabel(g.identity)} @ {shortResource(g.grantedOn)}
-                      </code>
-                    ))}
-                  </span>
-                )}
               </button>
+              {selected && (
+                <div className="role-detail">
+                  <span className="muted">Workload（選ぶと、そのワークロードからの経路だけを表示します）</span>
+                  {match.workloads.map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`workload-choice${selectedWorkload === id ? ' selected' : ''}`}
+                      aria-pressed={selectedWorkload === id}
+                      onClick={() => onSelectWorkload(selectedWorkload === id ? null : id)}
+                    >
+                      {view.nodes.get(id)?.label ?? id}
+                    </button>
+                  ))}
+                  <span className="muted">付与</span>
+                  {match.grants.map((g) => (
+                    <code key={g.viewNodeId + g.identity} className="wrap">
+                      {identityLabel(g.identity)} @ {shortResource(g.grantedOn)}
+                    </code>
+                  ))}
+                </div>
+              )}
               {selected && permissions.length > PERMISSION_PREVIEW && (
                 <button type="button" className="link show-more" onClick={() => setShowAllPermissions((v) => !v)}>
                   {showAllPermissions ? '一致した permission を折りたたむ' : `一致した permission をすべて表示（${permissions.length} 件）`}

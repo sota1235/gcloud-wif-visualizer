@@ -136,3 +136,11 @@ export function roleFocus(matches: RoleMatch[], view: ViewGraph) {
     downstreamFrom: [],
   };
 }
+
+/** 検索結果を、1 つのワークロード（の principal）から到達できる付与だけに絞る */
+export function narrowToWorkload(matches: RoleMatch[], view: ViewGraph, workloadId: string): RoleMatch[] {
+  const principals = new Set(view.edges.filter((e) => e.kind === 'resolves' && e.source === workloadId).map((e) => e.target));
+  return matches
+    .map((m) => ({ ...m, workloads: m.workloads.filter((w) => w === workloadId), grants: m.grants.filter((g) => g.principals.some((p) => principals.has(p))) }))
+    .filter((m) => m.grants.length > 0);
+}

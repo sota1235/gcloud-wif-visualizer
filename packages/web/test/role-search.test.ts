@@ -10,7 +10,8 @@ import {
   type Container,
   type MemberBinding,
 } from '@wif-viz/core';
-import { matchesTerms, reachableRolesAndPermissions, roleFocus, searchAccess } from '../src/role-search.ts';
+import { downstreamSubgraph, pathSubgraph } from '../src/focus.ts';
+import { matchesTerms, narrowToWorkload, reachableRolesAndPermissions, roleFocus, searchAccess } from '../src/role-search.ts';
 import { buildViewGraph, grantNodeId } from '../src/view-graph.ts';
 
 const ORG = '//cloudresourcemanager.googleapis.com/organizations/1';
@@ -176,5 +177,33 @@ describe('reachableRolesAndPermissions', () => {
     expect(reachableRoles).toEqual(['roles/iam.workloadIdentityUser', 'roles/run.admin', 'roles/storage.admin', 'roles/storage.objectViewer']);
     expect(permissions).toContain('storage.objects.delete');
     expect(permissions).toEqual([...permissions].sort());
+  });
+});
+
+describe('narrowToWorkload', () => {
+  // principal に解決されるワークロード
+  const workloadId = (view: Awaited<ReturnType<typeof setup>>['view'], repo: string) =>
+    view.edges.find((e) => e.kind === 'resolves' && e.target === principal(repo))!.source;
+
+  it('ワークロードの principal から到達できない付与とロールを除く', async () => {
+    const { snapshot, view } = await setup();
+    const app = workloadId(view, 'org/app');
+    const narrowed = narrowToWorkload(searchAccess(snapshot, view, 'storage'), view, app);
+
+    // storage.objectViewer は org/web からしか到達できない
+    expect(narrowed.map((m) => [m.role, m.workloads, m.grants.map((g) => g.identity)])).toEqual([['roles/storage.admin', [app], [sa('deploy')]]]);
+  });
+
+  it('絞り込んだ経路を表示するとき、同じ SA に到達するほかのワークロードを含めない', async () => {
+    const { snapshot, view } = await setup();
+    const app = workloadId(view, 'org/app');
+    const focus = roleFocus(narrowToWorkload(searchAccess(snapshot, view, 'storage.admin'), view, app), view);
+    const graph = downstreamSubgraph(pathSubgraph(view, focus.upstreamFrom, focus.downstreamFrom), app);
+
+    expect(graph.nodes.has(app)).toBe(true);
+    expect(graph.nodes.has(workloadId(view, 'org/web'))).toBe(false);
+    expect(graph.nodes.has(principal('org/web'))).toBe(false);
+    expect(graph.nodes.has(grantNodeId(sa('deploy'), PROJECT))).toBe(true);
+    expect(graph.nodes.has(`rg|${sa('deploy')}|${PROJECT}|storage.googleapis.com/Bucket`)).toBe(true);
   });
 });

@@ -487,8 +487,30 @@ code {
   flex-direction: column;
   gap: 2px;
   font-size: 12px;
-  padding-top: 4px;
-  border-top: 1px dashed var(--border);
+  margin: -2px 0 8px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+}
+
+.workload-choice {
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.workload-choice:hover {
+  border-color: var(--accent);
+}
+
+.workload-choice.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .segmented {

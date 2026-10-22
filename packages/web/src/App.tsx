@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { findingsOf, parseSnapshot, type Finding, type Severity, type Snapshot } from '@wif-viz/core';
 import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
-import { focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
+import { downstreamSubgraph, focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
 import { GraphView } from './GraphView.tsx';
-import { reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
+import { narrowToWorkload, reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
 import { RoleSearch } from './RoleSearch.tsx';
 import { buildViewGraph, findingFocus } from './view-graph.ts';
 import { WorkloadList } from './WorkloadList.tsx';
@@ -23,6 +23,8 @@ export function App() {
   const [roleQuery, setRoleQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [workloadQuery, setWorkloadQuery] = useState('');
+  // 検索結果のロールを選んだうえで、さらに 1 つのワークロードに絞る
+  const [searchWorkload, setSearchWorkload] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/snapshot')
@@ -41,17 +43,26 @@ export function App() {
     [snapshot, view, roleQuery, searchMode],
   );
   const roleSearchActive = tab === 'roles' && !focusIds && roleMatches.length > 0;
+  const searchWorkloadActive = roleSearchActive && selectedRole !== null && searchWorkload !== null;
   const focus = useMemo(() => {
     if (!view) return null;
     if (selectedFinding) return findingFocus(selectedFinding, view);
-    if (roleSearchActive) return roleFocus(selectedRole ? roleMatches.filter((m) => m.role === selectedRole) : roleMatches, view);
+    if (roleSearchActive) {
+      const selected = selectedRole ? roleMatches.filter((m) => m.role === selectedRole) : roleMatches;
+      if (!searchWorkloadActive) return roleFocus(selected, view);
+      const narrowed = roleFocus(narrowToWorkload(selected, view, searchWorkload!), view);
+      return { ...narrowed, highlight: [searchWorkload!, ...narrowed.highlight] };
+    }
     return null;
-  }, [view, selectedFinding, roleSearchActive, roleMatches, selectedRole]);
+  }, [view, selectedFinding, roleSearchActive, roleMatches, selectedRole, searchWorkloadActive, searchWorkload]);
   const displayed = useMemo(() => {
     if (!view) return null;
-    if (focus) return pathSubgraph(view, focus.upstreamFrom, focus.downstreamFrom);
+    if (focus) {
+      const paths = pathSubgraph(view, focus.upstreamFrom, focus.downstreamFrom);
+      return searchWorkloadActive ? downstreamSubgraph(paths, searchWorkload!) : paths;
+    }
     return focusIds ? focusSubgraph(view, focusIds) : overviewGraph(view);
-  }, [view, focus, focusIds]);
+  }, [view, focus, focusIds, searchWorkloadActive, searchWorkload]);
   const workloads = useMemo(() => (view ? [...view.nodes.values()].filter((n) => n.type === 'workload').sort((a, b) => a.label.localeCompare(b.label)) : []), [view]);
 
   if (error) return <p className="message error">{error}</p>;
@@ -74,6 +85,7 @@ export function App() {
     setSelectedNodeId(null);
     setRoleQuery('');
     setSelectedRole(null);
+    setSearchWorkload(null);
   };
   const switchTab = (next: Tab) => {
     setTab(next);
@@ -130,11 +142,19 @@ export function App() {
             mode={searchMode}
             onModeChange={setSearchMode}
             query={roleQuery}
-            onQueryChange={setRoleQuery}
+            onQueryChange={(query) => {
+              setRoleQuery(query);
+              setSearchWorkload(null);
+            }}
             candidates={searchMode === 'role' ? reachable.roles : reachable.permissions}
             matches={roleMatches}
             selectedRole={selectedRole}
-            onSelectRole={setSelectedRole}
+            onSelectRole={(role) => {
+              setSelectedRole(role);
+              setSearchWorkload(null);
+            }}
+            selectedWorkload={searchWorkload}
+            onSelectWorkload={setSearchWorkload}
             view={view}
           />
         ) : (
@@ -147,7 +167,9 @@ export function App() {
           {selectedFinding
             ? `検出結果の経路: ${selectedFinding.ruleId}`
             : roleSearchActive
-              ? `${searchMode === 'role' ? 'ロール' : 'permission'}の経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}`
+              ? `${searchMode === 'role' ? 'ロール' : 'permission'}の経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}${
+                  searchWorkloadActive ? `（${view.nodes.get(searchWorkload!)?.label ?? searchWorkload} から）` : ''
+                }`
               : focusIds
                 ? 'フォーカス表示'
                 : '概観（Workload → principal → SA）'}
