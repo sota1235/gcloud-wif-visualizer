@@ -87,6 +87,8 @@ type EffectiveAccess = {
 
 ```
 wif-viz collect --org <ORG_ID> -o snapshot.jsonl.gz    # GCP API → 正規化済みスナップショット
+wif-viz collect --org <ORG_ID> --from-export <dir>     # Cloud Asset のエクスポート → 同上（17.5）
+wif-viz export-commands --org <ORG_ID> --destination gs://<BUCKET>/<PATH>  # エクスポート用の gcloud コマンドを表示
 wif-viz serve snapshot.jsonl.gz [--base old.jsonl.gz]  # ローカル Web UI（--base で差分モード）
 wif-viz diff old.jsonl.gz new.jsonl.gz [--format text|json|markdown]
 ```
@@ -503,37 +505,40 @@ type EffectiveAccess = {
 
 ### 17.5 Cloud Asset のエクスポートからの収集（`collect --from-export`）
 
-API を個別に呼ぶ代わりに、`gcloud asset export` で書き出したファイルを入力にできるようにする。
+API を個別に呼ぶ代わりに、`gcloud asset export` で書き出したファイルを入力にできるようにする。エクスポートのコマンドは `wif-viz export-commands` で表示する。
 
 ```sh
-gcloud asset export --organization=<ORG_ID> --content-type=resource \
-  --output-path=gs://<BUCKET>/wif-viz/resource.json --billing-project=<PROJECT_ID>
-gcloud asset export --organization=<ORG_ID> --content-type=iam-policy \
-  --output-path=gs://<BUCKET>/wif-viz/iam-policy.json --billing-project=<PROJECT_ID>
-gcloud storage cp 'gs://<BUCKET>/wif-viz/*' ./export/
-
-pnpm wif-viz collect --org <ORG_ID> --from-export ./export/ -o my-org.snapshot.jsonl.gz
+pnpm wif-viz export-commands --org <ORG_ID> --destination gs://<BUCKET>/wif-viz --billing-project <PROJECT_ID>
+# 表示されたコマンドでエクスポートし、完了後にダウンロードする
+pnpm wif-viz collect --org <ORG_ID> --from-export ./wif-viz-export -o my-org.snapshot.jsonl.gz
 ```
 
-| 収集する情報 | API（v0.9） | `--from-export` |
+| 収集する情報 | API | `--from-export` |
 |---|---|---|
 | org / folder / project | `searchAllResources` | resource のエクスポート（`ancestors` と `resource.data`） |
 | インベントリ | `searchAllResources` | resource のエクスポート（展開対象のアセットタイプだけを読む） |
-| Pool / Provider の詳細 | IAM API（`get`） | resource のエクスポートの `resource.data`（要検証。足りない項目があれば IAM API で補う） |
+| Pool / Provider の詳細 | IAM API（`get`） | resource のエクスポートの `resource.data`。Provider の種類（`oidc` / `aws` / `saml` / `x509`）がない場合だけ IAM API で補う |
 | IAM のバインディング | `searchAllIamPolicies`（identity ごと） | iam-policy のエクスポート。読み込み時に member → バインディングの索引を作り、探索中は API を呼ばない |
-| カスタムロールの定義 | IAM API（`roles.get`） | resource のエクスポート（`iam.googleapis.com/Role`） |
+| カスタムロールの定義 | IAM API（`roles.get`） | resource のエクスポート（`iam.googleapis.com/Role`）。ないものは IAM API で補う |
 | predefined ロールの定義 | IAM API（`roles.get`） | IAM API（`roles.get`）。出現したロールの数だけ呼ぶ |
 
-- エクスポートは JSON Lines で、ファイルが大きいため 1 行ずつストリームで読む。
+- resource のエクスポートは、読み込むアセットタイプ（container、Pool / Provider、カスタムロール、展開対象）に `--asset-types` で絞る。絞らないと BigQuery のテーブル定義などを含み、非常に大きくなる。iam-policy は絞らない。
+- エクスポートは JSON Lines で、1 行ずつストリームで読む。ディレクトリを指定した場合は配下のすべてのファイルを読み、`.gz` は展開して読む。
+- ファイルごとに最初の行で resource と iam-policy を判別し、resource を先に読む。1 つのファイルに両方が混在する場合はエラーにする。
+- GCS に書き出したファイルはフィールド名が snake_case（`asset_type`、`iam_policy`）、API の応答は camelCase のため、どちらも受け付ける。
+- `ancestors` の最上位が `--org` の Organization でないアセットがあればエラーにする（別の Org のエクスポートを取り違えないため）。
+- エクスポートのアセット名のうち、次の 2 つは API の検索結果と形が異なるため、読み込み時に API の検索結果の形に揃える。揃えておくことで、API で収集したスナップショットとの差分が取れる。
+  - project: `projects/{number}` → `projects/{projectId}`（`resource.data.projectId`）。project への IAM ポリシーの付与先も同様に変換する。
+  - SA: `serviceAccounts/{uniqueId}` → `serviceAccounts/{email}`（`resource.data.email`）。SA への IAM ポリシーの付与先も同様に変換する。
 - iam-policy の索引には、探索に関係する member（`serviceAccount:` と WIF の `principal://` / `principalSet://`）のバインディングだけを入れる。
 - エクスポートはクォータの影響を受けにくく、一度取得すれば `collect` を何度でも実行し直せる。収集ロジックの改善や、ほかの `--max-depth` を試すときも API を呼ばない。
 - エクスポートには `cloudasset.assets.exportResource` / `exportIamPolicy`（`roles/cloudasset.viewer` に含まれる）と、出力先の GCS バケットへの書き込み権限が必要。
-- `--from-export` を使う場合でも、インベントリと IAM の索引はメモリに持つ。必要に応じて `NODE_OPTIONS=--max-old-space-size=<MB>` でヒープの上限を上げる（README に記載する）。
+- `--from-export` を使う場合でも、インベントリと IAM の索引はメモリに持つ。必要に応じて `NODE_OPTIONS=--max-old-space-size=<MB>` でヒープの上限を上げる。
 
 ### 17.6 実装の順序
 
 1. スナップショット形式の変更（17.1、17.2）と、core（Lint、差分、件数の計算）の対応（実装済み）
 2. serve と Web UI の対応（17.3）（実装済み）
-3. `collect --from-export`（17.5）
+3. `collect --from-export`（17.5）（実装済み）
 
 1 と 2 がないと、収集方法を変えても書き出しで失敗するため、この順で進める。

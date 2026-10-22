@@ -49,6 +49,7 @@ pnpm wif-viz collect --org <ORG_ID> --quota-project <PROJECT_ID> -o my-org.snaps
 | `--max-depth <n>` | impersonation を辿る SA の段数の上限 | `5` |
 | `--quota-project <id>` | API のクォータを付ける project（ADC の quota project を上書き） | ADC の設定 |
 | `--concurrency <n>` | API の同時呼び出し数 | `8` |
+| `--from-export <path>` | `gcloud asset export` で書き出したファイル（またはそのディレクトリ）から収集する | |
 
 収集が終わると、Lint の件数（high / medium / low）が表示されます。
 
@@ -58,6 +59,28 @@ pnpm wif-viz collect --org <ORG_ID> --quota-project <PROJECT_ID> -o my-org.snaps
 
 - リソースが数百万件規模になると、Node.js のデフォルトのヒープ上限では足りないことがあります。`NODE_OPTIONS=--max-old-space-size=8192` のように上限を上げてください
 - Cloud Asset の `SearchAllIamPolicies` には、quota project ごとに 1 分あたりの上限があります（デフォルトは 100 回）。`RESOURCE_EXHAUSTED` で止まる場合は `--concurrency` を下げるか、他の用途と共有していない project を `--quota-project` に指定してください
+- API の呼び出し回数を抑えたい場合や、収集を何度もやり直したい場合は、次のエクスポートからの収集を使ってください
+
+#### Cloud Asset のエクスポートから収集する
+
+`gcloud asset export` で Organization 全体のリソースと IAM ポリシーを書き出し、そのファイルから収集します。IAM のバインディングを API で 1 件ずつ検索しないため、クォータの影響を受けにくく、一度書き出せば `collect` を何度でも実行し直せます。
+
+必要なコマンドは `export-commands` で表示できます。
+
+```sh
+pnpm wif-viz export-commands --org <ORG_ID> --destination gs://<BUCKET>/wif-viz --billing-project <PROJECT_ID>
+```
+
+表示される手順は次のとおりです。
+
+1. resource（読み込むアセットタイプに絞ったもの）と iam-policy のエクスポートを開始する。エクスポートは非同期で実行されるため、完了を `gcloud asset operations describe` で確認する
+2. 書き出されたファイルを手元にダウンロードする
+3. `pnpm wif-viz collect --org <ORG_ID> --from-export ./wif-viz-export` でスナップショットを作る
+
+- エクスポートには、`roles/cloudasset.viewer` に加えて、書き出し先の GCS バケットへの書き込み権限が必要です
+- ディレクトリを指定すると、配下のすべてのファイルを読み込みます。gzip 圧縮したファイル（`.gz`）も読み込めます
+- predefined ロールの定義と、エクスポートに詳細が含まれない Provider だけは IAM API で取得します
+- エクスポートのファイルにも組織の権限情報が含まれます。スナップショットと同様に取り扱いに注意してください
 
 ### 2. ブラウザで表示する
 
@@ -110,7 +133,7 @@ impersonation は、`iam.serviceAccounts.getAccessToken` などに加えて `iam
 ```
 packages/
   core/       グラフ構築、impersonation の探索、ワークロード推定、リソース展開、Lint、差分（API に依存しない純粋なロジック）
-  collector/  GCP API（Cloud Asset Inventory / IAM）からの収集
+  collector/  GCP API（Cloud Asset Inventory / IAM）と Cloud Asset のエクスポートからの収集
   web/        ブラウザ UI（React + React Flow + elkjs）と serve 用のサーバー
   cli/        wif-viz コマンド
 poc/          技術検証用のスクリプトとビューア
