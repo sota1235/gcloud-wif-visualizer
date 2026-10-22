@@ -7,6 +7,7 @@ import { GraphView } from './GraphView.tsx';
 import { reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
 import { RoleSearch } from './RoleSearch.tsx';
 import { buildViewGraph, findingFocus } from './view-graph.ts';
+import { WorkloadList } from './WorkloadList.tsx';
 
 type Tab = 'findings' | 'workloads' | 'roles';
 
@@ -21,6 +22,7 @@ export function App() {
   const [searchMode, setSearchMode] = useState<SearchMode>('role');
   const [roleQuery, setRoleQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [workloadQuery, setWorkloadQuery] = useState('');
 
   useEffect(() => {
     fetch('/api/snapshot')
@@ -136,16 +138,7 @@ export function App() {
             view={view}
           />
         ) : (
-          <ul className="workload-list">
-            {workloads.map((w) => (
-              <li key={w.id}>
-                <button type="button" className={focusIds?.[0] === w.id ? 'selected' : ''} onClick={() => focusOn(w.id)}>
-                  {w.severity && <span className={`severity-dot severity-${w.severity}`} />}
-                  {w.label}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <WorkloadList workloads={workloads} query={workloadQuery} onQueryChange={setWorkloadQuery} selectedId={focusIds?.[0] ?? null} onSelect={focusOn} />
         )}
       </nav>
 
