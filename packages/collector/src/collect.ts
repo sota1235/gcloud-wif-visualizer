@@ -38,8 +38,8 @@ export interface CollectResult {
   warnings: string[];
 }
 
-const CRM = '//cloudresourcemanager.googleapis.com/';
-const CONTAINER_TYPES = {
+export const CRM = '//cloudresourcemanager.googleapis.com/';
+export const CONTAINER_TYPES = {
   'cloudresourcemanager.googleapis.com/Organization': 'organization',
   'cloudresourcemanager.googleapis.com/Folder': 'folder',
   'cloudresourcemanager.googleapis.com/Project': 'project',
@@ -85,14 +85,14 @@ export function toMemberBindings(results: IamPolicySearchResult[], memberFilter:
   return bindings;
 }
 
-interface IamPool {
+export interface IamPool {
   name: string;
   displayName?: string;
   state?: string;
   disabled?: boolean;
 }
 
-interface IamProvider extends IamPool {
+export interface IamProvider extends IamPool {
   attributeMapping?: Record<string, string>;
   attributeCondition?: string;
   oidc?: { issuerUri?: string; allowedAudiences?: string[] };
@@ -155,10 +155,31 @@ export function existingServiceAccountsOf(
 
 // ---- 収集 ----
 
+/** 収集方法（API / エクスポート）によらず、探索とスナップショットの作成に使うデータ */
+export interface OrgData {
+  containers: Container[];
+  inventory: ResourceInventory;
+  pools: WorkloadIdentityPool[];
+  providers: WorkloadIdentityPoolProvider[];
+  /** WIF principal に付与されたバインディング（探索の起点） */
+  wifBindings: MemberBinding[];
+  /** WIF principal 以外の member（SA）に付与されたバインディング */
+  bindingsForMember(member: string): Promise<MemberBinding[]>;
+  /** ロールに含まれる permission。定義が見つからない場合は undefined */
+  rolePermissions(role: string): Promise<string[] | undefined>;
+}
+
+const CRM_ORGANIZATIONS = `${CRM}organizations/`;
+
+/** Organization はアセットとして取得できない場合があるため補う */
+export function withOrganization(containers: Container[], orgId: string): Container[] {
+  const name = `${CRM_ORGANIZATIONS}${orgId}`;
+  return containers.some((c) => c.name === name) ? containers : [...containers, { name, type: 'organization', id: orgId }];
+}
+
 export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): Promise<CollectResult> {
   const log = options.log ?? (() => {});
   const scope = `organizations/${options.orgId}`;
-  const warnings: string[] = [];
 
   log('組織構造とリソースのインベントリを取得しています');
   const [containerResults, wifResults, inventoryResults, wifPolicyResults] = await Promise.all([
@@ -168,10 +189,7 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
     gcp.searchIamPolicies(scope, 'policy:workloadIdentityPools'),
   ]);
 
-  const containers = containerResults;
-  // Organization はアセットとして検索できない場合があるため補う
-  const orgName = `${CRM}organizations/${options.orgId}`;
-  if (!containers.some((c) => c.name === orgName)) containers.push({ name: orgName, type: 'organization', id: options.orgId });
+  const containers = withOrganization(containerResults, options.orgId);
   const inventory = new ResourceInventory(containers, inventoryResults);
   inventoryResults.length = 0;
   log(`container ${containers.length} 件、インベントリ ${inventory.size} 件`);
@@ -182,13 +200,30 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
     Promise.all(wifResults.filter((r) => r.assetType === 'iam.googleapis.com/WorkloadIdentityPool').map((r) => gcp.iamGet<IamPool>(iamPath(r.name)))),
     Promise.all(wifResults.filter((r) => r.assetType === 'iam.googleapis.com/WorkloadIdentityPoolProvider').map((r) => gcp.iamGet<IamProvider>(iamPath(r.name)))),
   ]);
-  const wifPools = pools.filter((p): p is IamPool => p !== undefined).map(toPool);
-  const wifProviders = providers.filter((p): p is IamProvider => p !== undefined).map(toProvider);
-  log(`Pool ${wifPools.length} 件、Provider ${wifProviders.length} 件`);
+
+  return buildSnapshot(
+    {
+      containers,
+      inventory,
+      pools: pools.filter((p): p is IamPool => p !== undefined).map(toPool),
+      providers: providers.filter((p): p is IamProvider => p !== undefined).map(toProvider),
+      wifBindings: toMemberBindings(wifPolicyResults, isWifMember),
+      bindingsForMember: async (member) => toMemberBindings(await gcp.searchIamPolicies(scope, `policy:"${member}"`), (m) => m === member),
+      rolePermissions: async (role) => (await gcp.iamGet<{ includedPermissions?: string[] }>(role))?.includedPermissions,
+    },
+    options,
+  );
+}
+
+/** WIF principal から権限の経路を探索し、スナップショットを作る */
+export async function buildSnapshot(data: OrgData, options: CollectOptions): Promise<CollectResult> {
+  const log = options.log ?? (() => {});
+  const warnings: string[] = [];
+  const { containers, inventory } = data;
+  log(`Pool ${data.pools.length} 件、Provider ${data.providers.length} 件`);
 
   // ---- AccessSource の実装 ----
-  const wifBindings = toMemberBindings(wifPolicyResults, isWifMember);
-  const principals = [...new Set(wifBindings.map((b) => b.member))].sort();
+  const principals = [...new Set(data.wifBindings.map((b) => b.member))].sort();
   const bindingsCache = new Map<string, Promise<MemberBinding[]>>();
   const rolesCache = new Map<string, Promise<string[]>>();
   const containersByName = new Map(containers.map((c) => [c.name, c]));
@@ -198,9 +233,7 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
     bindingsForMember(member) {
       let cached = bindingsCache.get(member);
       if (!cached) {
-        cached = isWifMember(member)
-          ? Promise.resolve(wifBindings.filter((b) => b.member === member))
-          : gcp.searchIamPolicies(scope, `policy:"${member}"`).then((results) => toMemberBindings(results, (m) => m === member));
+        cached = isWifMember(member) ? Promise.resolve(data.wifBindings.filter((b) => b.member === member)) : data.bindingsForMember(member);
         bindingsCache.set(member, cached);
       }
       return cached;
@@ -208,9 +241,9 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
     rolePermissions(role) {
       let cached = rolesCache.get(role);
       if (!cached) {
-        cached = gcp.iamGet<{ includedPermissions?: string[] }>(role).then((data) => {
-          if (!data) warnings.push(`ロール ${role} の定義を取得できませんでした（permission なしとして扱います）`);
-          return data?.includedPermissions ?? [];
+        cached = data.rolePermissions(role).then((permissions) => {
+          if (!permissions) warnings.push(`ロール ${role} の定義を取得できませんでした（permission なしとして扱います）`);
+          return permissions ?? [];
         });
         rolesCache.set(role, cached);
       }
@@ -236,11 +269,11 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
   const rolePermissions = Object.fromEntries(await Promise.all(roleNames.map(async (role) => [role, await source.rolePermissions(role)] as const)));
 
   const existingServiceAccounts = existingServiceAccountsOf(explored, serviceAccountInventory, containers);
-  const graph = buildAccessGraph({ pools: wifPools, providers: wifProviders, containers, explored, existingServiceAccounts });
+  const graph = buildAccessGraph({ pools: data.pools, providers: data.providers, containers, explored, existingServiceAccounts });
   const effectiveAccess = computeEffectiveAccess(graph, { rolePermissions, assetTypeOf: (name) => inventory.get(name)?.assetType });
   log(`ノード ${graph.nodes.size} 件、エッジ ${graph.edges.size} 件、実効アクセス ${effectiveAccess.length} 件`);
 
-  const org = containersByName.get(orgName);
+  const org = containersByName.get(`${CRM_ORGANIZATIONS}${options.orgId}`);
   return {
     snapshot: createSnapshot({
       org: { id: options.orgId, ...(org?.displayName ? { displayName: org.displayName } : {}) },
