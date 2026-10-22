@@ -4,72 +4,40 @@ import { computeEffectiveAccess } from '../src/effective.ts';
 import { explore } from '../src/explore.ts';
 import { buildAccessGraph } from '../src/graph.ts';
 import { createStaticSource } from '../src/source.ts';
-import type { InventoryResource, MemberBinding } from '../src/types.ts';
-import { containers, FOLDER, ORG, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, roles, source } from './fixtures.ts';
+import type { MemberBinding } from '../src/types.ts';
+import { containers, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, roles, source } from './fixtures.ts';
 
-const bucket = (name: string, project: '111' | '222'): InventoryResource => ({
-  name: `//storage.googleapis.com/${name}`,
-  assetType: 'storage.googleapis.com/Bucket',
-  project: `projects/${project}`,
-  folders: project === '111' ? ['folders/10'] : [],
-  organization: 'organizations/1',
-});
-
-const inventory: InventoryResource[] = [
-  bucket('bucket-a', '111'),
-  bucket('bucket-b', '222'),
-  {
-    name: '//secretmanager.googleapis.com/projects/111/secrets/token',
-    assetType: 'secretmanager.googleapis.com/Secret',
-    project: 'projects/111',
-    folders: ['folders/10'],
-    organization: 'organizations/1',
-  },
-];
+const BUCKET_B = '//storage.googleapis.com/bucket-b';
 
 async function access(bindings: Omit<MemberBinding, 'member'>[]) {
   const withMember = bindings.map((b) => ({ ...b, member: REPO_PRINCIPAL }));
   const explored = await explore([REPO_PRINCIPAL], createStaticSource(source(withMember)), { maxDepth: 5 });
   const graph = buildAccessGraph({ pools: [], providers: [], containers, explored });
-  return computeEffectiveAccess(graph, { inventory, rolePermissions: roles });
+  const assetTypes: Record<string, string> = { [BUCKET_B]: 'storage.googleapis.com/Bucket' };
+  return computeEffectiveAccess(graph, { rolePermissions: roles, assetTypeOf: (name) => assetTypes[name] });
 }
 
-const names = (rows: Awaited<ReturnType<typeof access>>) => rows.flatMap((r) => r.resources.map((x) => x.name));
-
 describe('リソース展開', () => {
-  it('project に付与されたロールを、配下の該当アセットタイプのリソースに展開する', async () => {
+  it('container に付与されたロールは、対応表で判定したアセットタイプを持つ', async () => {
     const [row] = await access([{ resource: PROJECT_A, role: 'roles/storage.admin' }]);
 
-    expect(row).toMatchObject({
-      grantedOnKind: 'container',
-      resources: [{ name: '//storage.googleapis.com/bucket-a', assetType: 'storage.googleapis.com/Bucket' }],
-      unmappedPermissionCount: 0,
-    });
-  });
-
-  it('folder / org に付与されたロールは子孫の project のリソースまで展開する', async () => {
-    expect(names(await access([{ resource: FOLDER, role: 'roles/storage.admin' }]))).toEqual(['//storage.googleapis.com/bucket-a']);
-    expect(names(await access([{ resource: ORG, role: 'roles/storage.admin' }]))).toEqual([
-      '//storage.googleapis.com/bucket-a',
-      '//storage.googleapis.com/bucket-b',
-    ]);
+    expect(row).toMatchObject({ grantedOnKind: 'container', assetTypes: ['storage.googleapis.com/Bucket'], unmappedPermissionCount: 0 });
   });
 
   it('対応表にない permission は数だけを記録する', async () => {
     const [viewer] = await access([{ resource: PROJECT_B, role: 'roles/viewer' }]);
     const [iamAdmin] = await access([{ resource: PROJECT_B, role: 'roles/resourcemanager.projectIamAdmin' }]);
 
-    expect(viewer).toMatchObject({ resources: [{ name: '//storage.googleapis.com/bucket-b' }], unmappedPermissionCount: 1 });
-    expect(iamAdmin).toMatchObject({ resources: [], unmappedPermissionCount: 2 });
+    expect(viewer).toMatchObject({ assetTypes: ['storage.googleapis.com/Bucket'], unmappedPermissionCount: 1 });
+    expect(iamAdmin).toMatchObject({ assetTypes: [], unmappedPermissionCount: 2 });
   });
 
-  it('個別のリソースへの付与はそのリソースだけを対象にし、アセットタイプを補う', async () => {
-    const [row] = await access([{ resource: '//storage.googleapis.com/bucket-b', role: 'roles/storage.admin' }]);
+  it('個別のリソースへの付与は、そのリソースのアセットタイプを持つ。インベントリにない場合は空にする', async () => {
+    const [known] = await access([{ resource: BUCKET_B, role: 'roles/storage.admin' }]);
+    const [unknown] = await access([{ resource: '//storage.googleapis.com/unknown', role: 'roles/storage.admin' }]);
 
-    expect(row).toMatchObject({
-      grantedOnKind: 'resource',
-      resources: [{ name: '//storage.googleapis.com/bucket-b', assetType: 'storage.googleapis.com/Bucket' }],
-    });
+    expect(known).toMatchObject({ grantedOnKind: 'resource', assetTypes: ['storage.googleapis.com/Bucket'] });
+    expect(unknown).toMatchObject({ grantedOnKind: 'resource', assetTypes: [] });
   });
 
   it('条件だけが異なる同じ付与は 1 行にまとめ、条件なしがあれば無条件とする', async () => {
@@ -90,7 +58,7 @@ describe('リソース展開', () => {
     );
     const graph = buildAccessGraph({ pools: [], providers: [], containers, explored });
 
-    expect(() => computeEffectiveAccess(graph, { inventory, rolePermissions: {} })).toThrow(/roles\/storage.admin/);
+    expect(() => computeEffectiveAccess(graph, { rolePermissions: {} })).toThrow(/roles\/storage.admin/);
   });
 });
 

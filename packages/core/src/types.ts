@@ -182,36 +182,41 @@ export interface EffectiveAccess {
   /** grantedOn が container（org / folder / project）か、個別のリソースか */
   grantedOnKind: 'container' | 'resource';
   /**
-   * このロールで操作できる実リソース。
-   * grantedOn が個別のリソースならそれ自身、container なら配下のうち対応表で判定したアセットタイプのもの
+   * このロールで操作できる実リソースのアセットタイプ。
+   * container への付与なら、配下のこのアセットタイプのリソースすべてに到達できる（対応表で判定したもの）。
+   * リソースへの付与なら、そのリソース自身のアセットタイプ（インベントリにない場合は空）
    */
-  resources: AccessibleResource[];
+  assetTypes: string[];
   /** 対応表でアセットタイプに展開できなかった permission の数（container 単位の権限として扱う） */
   unmappedPermissionCount: number;
   /** 経路上に IAM Condition があるか */
   conditional: boolean;
 }
 
-export interface AccessibleResource {
-  name: FullResourceName;
-  assetType?: string;
-}
+/** 実効アクセスが到達できるリソースの集合 */
+export type AccessTarget = Pick<EffectiveAccess, 'grantedOn' | 'grantedOnKind' | 'assetTypes'>;
 
-/** Cloud Asset の searchAllResources で取得したリソース（展開に使う） */
+/** インベントリの 1 件（展開対象のアセットタイプのリソース） */
 export interface InventoryResource {
   name: FullResourceName;
   assetType: string;
-  /** `projects/{number}` */
-  project?: string;
-  /** `folders/{id}`（祖先すべて） */
-  folders: string[];
-  /** `organizations/{id}` */
-  organization?: string;
-  displayName?: string;
+  /** 祖先の container（`projects/{number}`、`folders/{id}`、`organizations/{id}`） */
+  ancestors: string[];
 }
 
-export const SNAPSHOT_SCHEMA_VERSION = 1;
+export const SNAPSHOT_SCHEMA_VERSION = 2;
 
+/** container → アセットタイプ → 配下（子孫の container を含む）のリソース数 */
+export type ResourceCounts = Record<FullResourceName, Record<string, number>>;
+
+/** リソースへの付与の付与先。container への付与と重複して数えないよう、祖先を持つ */
+export interface TargetResource {
+  assetType: string;
+  /** 祖先の container の full resource name */
+  ancestors: FullResourceName[];
+}
+
+/** スナップショットのうち、インベントリを除いた部分（Web UI にはこれだけを渡す） */
 export interface Snapshot {
   schemaVersion: typeof SNAPSHOT_SCHEMA_VERSION;
   collectedAt: string;
@@ -222,4 +227,7 @@ export interface Snapshot {
   nodes: GraphNode[];
   edges: GraphEdge[];
   effectiveAccess: EffectiveAccess[];
+  resourceCounts: ResourceCounts;
+  /** リソースへの付与の付与先のうち、インベントリにあるもの */
+  targetResources: Record<FullResourceName, TargetResource>;
 }

@@ -1,4 +1,6 @@
+import type { ResourceInventory } from './inventory.ts';
 import { lint, type Finding } from './lint.ts';
+import { createResourceCounter } from './resource-count.ts';
 import { snapshotToGraph } from './snapshot.ts';
 import type { EffectiveAccess, GraphNode, ProviderNode, Snapshot, WorkloadIdentityPool, WorkloadIdentityPoolProvider } from './types.ts';
 import type { InferOptions } from './workload.ts';
@@ -6,8 +8,10 @@ import type { InferOptions } from './workload.ts';
 export interface AccessChange {
   before: EffectiveAccess;
   after: EffectiveAccess;
-  addedResources: string[];
-  removedResources: string[];
+  resourceCount: { before: number; after: number };
+  /** 増減したリソース（インベントリを渡した場合のみ） */
+  addedResources?: string[];
+  removedResources?: string[];
   /** conditional が変わったか */
   conditionalChanged: boolean;
 }
@@ -64,27 +68,54 @@ function diffConfig<T extends object>(base: Map<string, T>, head: Map<string, T>
 }
 
 export function findingsOf(snapshot: Snapshot, inferOptions?: InferOptions): Finding[] {
-  return lint({ graph: snapshotToGraph(snapshot), effectiveAccess: snapshot.effectiveAccess, roles: snapshot.roles, ...(inferOptions ? { inferOptions } : {}) });
+  return lint({
+    graph: snapshotToGraph(snapshot),
+    effectiveAccess: snapshot.effectiveAccess,
+    roles: snapshot.roles,
+    countResources: createResourceCounter(snapshot),
+    ...(inferOptions ? { inferOptions } : {}),
+  });
+}
+
+export interface DiffOptions {
+  inferOptions?: InferOptions;
+  /** 両方のインベントリを渡すと、増減したリソースの名前まで求める（渡さない場合は件数で判定する） */
+  inventories?: { base: ResourceInventory; head: ResourceInventory };
 }
 
 /** 2 つのスナップショットの差分。Lint はスナップショットから都度算出する（ルールの改善を過去のスナップショットにも反映するため） */
-export function diffSnapshots(base: Snapshot, head: Snapshot, inferOptions?: InferOptions): SnapshotDiff {
+export function diffSnapshots(base: Snapshot, head: Snapshot, options: DiffOptions = {}): SnapshotDiff {
   if (base.org.id !== head.org.id) throw new Error(`different organizations: ${base.org.id} and ${head.org.id}`);
+  const { inferOptions, inventories } = options;
+  const countBase = createResourceCounter(base);
+  const countHead = createResourceCounter(head);
 
   const access = diffById(byId(base.effectiveAccess), byId(head.effectiveAccess));
   const changed: AccessChange[] = access.both
-    .map(({ before, after }) => {
-      const beforeNames = new Set(before.resources.map((r) => r.name));
-      const afterNames = new Set(after.resources.map((r) => r.name));
-      return {
+    .map(({ before, after }): AccessChange => {
+      const change: AccessChange = {
         before,
         after,
-        addedResources: [...afterNames].filter((n) => !beforeNames.has(n)).sort(),
-        removedResources: [...beforeNames].filter((n) => !afterNames.has(n)).sort(),
+        resourceCount: { before: countBase([before]), after: countHead([after]) },
         conditionalChanged: before.conditional !== after.conditional,
       };
+      if (!inventories) return change;
+      const beforeNames = new Set(inventories.base.listTarget(before));
+      const afterNames = inventories.head.listTarget(after);
+      const afterSet = new Set(afterNames);
+      return {
+        ...change,
+        addedResources: afterNames.filter((n) => !beforeNames.has(n)),
+        removedResources: [...beforeNames].filter((n) => !afterSet.has(n)),
+      };
     })
-    .filter((c) => c.addedResources.length > 0 || c.removedResources.length > 0 || c.conditionalChanged);
+    .filter(
+      (c) =>
+        c.conditionalChanged ||
+        c.resourceCount.before !== c.resourceCount.after ||
+        c.before.assetTypes.join() !== c.after.assetTypes.join() ||
+        (c.addedResources?.length ?? 0) + (c.removedResources?.length ?? 0) > 0,
+    );
 
   const providerMap = (s: Snapshot) => new Map(configNodes(s, 'provider').map((n: ProviderNode) => [n.id, n.provider]));
   const poolMap = (s: Snapshot) => new Map(configNodes(s, 'pool').map((n) => [n.id, n.pool]));

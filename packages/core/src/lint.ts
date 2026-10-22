@@ -1,5 +1,6 @@
 import { reachableIdentities } from './effective.ts';
 import { edgeId, isContainerResource } from './names.ts';
+import type { ResourceCounter } from './resource-count.ts';
 import type {
   AccessGraph,
   EffectiveAccess,
@@ -48,6 +49,8 @@ export interface LintInput {
   graph: AccessGraph;
   effectiveAccess: EffectiveAccess[];
   roles: Record<string, string[]>;
+  /** 影響範囲のリソース数を求める */
+  countResources: ResourceCounter;
   inferOptions?: InferOptions;
 }
 
@@ -76,7 +79,7 @@ function isPowerfulRole(role: string, roles: Record<string, string[]>): boolean 
 }
 
 export function lint(input: LintInput): Finding[] {
-  const { graph, effectiveAccess, roles } = input;
+  const { graph, effectiveAccess, roles, countResources } = input;
   const nodes = [...graph.nodes.values()];
   const edges = [...graph.edges.values()];
   const findings = new Map<string, Finding>();
@@ -93,7 +96,7 @@ export function lint(input: LintInput): Finding[] {
     return {
       principals: uniquePrincipals,
       workloads: [...new Set(uniquePrincipals.flatMap((p) => workloadsByPrincipal.get(p) ?? []))].sort(),
-      resourceCount: new Set(rows.flatMap((r) => r.resources.map((x) => x.name))).size,
+      resourceCount: countResources(rows),
     };
   };
 

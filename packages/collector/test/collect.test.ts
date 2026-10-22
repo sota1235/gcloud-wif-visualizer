@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { existingServiceAccountsOf, toContainer, toMemberBindings, toPool, toProvider } from '../src/collect.ts';
+import { existingServiceAccountsOf, toContainer, toInventoryResource, toMemberBindings, toPool, toProvider } from '../src/collect.ts';
 
 describe('API レスポンスの変換', () => {
   it('project の検索結果を container に変換する', () => {
@@ -19,6 +19,26 @@ describe('API レスポンスの変換', () => {
       displayName: 'My Project',
       parent: '//cloudresourcemanager.googleapis.com/folders/10',
     });
+  });
+
+  it('リソースの検索結果を、祖先の container を近い順に並べたインベントリに変換する', () => {
+    expect(
+      toInventoryResource({
+        assetType: 'storage.googleapis.com/Bucket',
+        name: '//storage.googleapis.com/b',
+        project: 'projects/123',
+        folders: ['folders/20', 'folders/10'],
+        organization: 'organizations/1',
+      }),
+    ).toEqual({
+      name: '//storage.googleapis.com/b',
+      assetType: 'storage.googleapis.com/Bucket',
+      ancestors: ['projects/123', 'folders/20', 'folders/10', 'organizations/1'],
+    });
+  });
+
+  it('名前やアセットタイプがない検索結果はインベントリに入れない', () => {
+    expect(toInventoryResource({ assetType: 'storage.googleapis.com/Bucket' })).toBeUndefined();
   });
 
   it('IAM ポリシーの検索結果を member ごとのバインディングに分解し、条件を保持する', () => {
@@ -77,7 +97,7 @@ describe('existingServiceAccountsOf', () => {
         ]),
         serviceAccountEdges: [],
       },
-      [{ name: '//iam.googleapis.com/projects/proj/serviceAccounts/live@proj.iam.gserviceaccount.com', assetType: 'iam.googleapis.com/ServiceAccount', folders: [] }],
+      [{ name: '//iam.googleapis.com/projects/proj/serviceAccounts/live@proj.iam.gserviceaccount.com', assetType: 'iam.googleapis.com/ServiceAccount', ancestors: [] }],
       [{ name: '//cloudresourcemanager.googleapis.com/projects/proj', type: 'project', id: 'proj', projectNumber: '1' }],
     );
 

@@ -2,5 +2,6 @@ node_modules/
 dist/
 poc/out/
 *.snapshot.json
+*.snapshot.jsonl.gz
 .wif-viz/
 poc/viz/public/data/

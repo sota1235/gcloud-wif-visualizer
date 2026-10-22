@@ -40,7 +40,8 @@ function createLimiter(concurrency: number) {
 }
 
 export interface GcpClient {
-  searchResources(scope: string, assetTypes: string[]): Promise<ResourceSearchResult[]>;
+  /** 検索結果を 1 件ずつ map で変換して返す（レスポンスのオブジェクトをため込まないため）。undefined は捨てる */
+  searchResources<T>(scope: string, assetTypes: string[], map: (result: ResourceSearchResult) => T | undefined): Promise<T[]>;
   searchIamPolicies(scope: string, query: string): Promise<IamPolicySearchResult[]>;
   /** IAM REST API（v1）の GET。404 の場合は undefined */
   iamGet<T>(path: string): Promise<T | undefined>;
@@ -73,10 +74,13 @@ export function createGcpClient(options: GcpClientOptions = {}): GcpClient {
 
   return {
     stats,
-    searchResources: (scope, assetTypes) =>
+    searchResources: <T>(scope: string, assetTypes: string[], map: (result: ResourceSearchResult) => T | undefined) =>
       call('searchAllResources', async () => {
-        const results: ResourceSearchResult[] = [];
-        for await (const r of asset.searchAllResourcesAsync({ scope, assetTypes, pageSize: 500 }, { autoPaginate: false })) results.push(r);
+        const results: T[] = [];
+        for await (const r of asset.searchAllResourcesAsync({ scope, assetTypes, pageSize: 500 }, { autoPaginate: false })) {
+          const mapped = map(r);
+          if (mapped !== undefined) results.push(mapped);
+        }
         return results;
       }),
     searchIamPolicies: (scope, query) =>

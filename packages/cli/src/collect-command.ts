@@ -1,12 +1,12 @@
-import { writeFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
 import { collectSnapshot, createGcpClient } from '@wif-viz/collector';
 import { findingsOf } from '@wif-viz/core';
+import { writeSnapshotFile } from '@wif-viz/core/node';
 
 const USAGE = `使い方: wif-viz collect --org <ORG_ID> [options]
 
   --org <id>              対象の Organization ID（必須）
-  -o, --output <path>     出力先（デフォルト: wif-viz-<org>-<日付>.snapshot.json）
+  -o, --output <path>     出力先（デフォルト: wif-viz-<org>-<日付>.snapshot.jsonl.gz）
   --max-depth <n>         impersonation を辿る SA の段数の上限（デフォルト: 5）
   --quota-project <id>    API のクォータを付ける project（ADC の quota project を上書き）
   --concurrency <n>       API の同時呼び出し数（デフォルト: 8）`;
@@ -33,14 +33,14 @@ export async function collectCommand(args: string[]): Promise<number> {
     ...(values['quota-project'] ? { quotaProject: values['quota-project'] } : {}),
     concurrency: Number(values.concurrency),
   });
-  const { snapshot, warnings } = await collectSnapshot(gcp, {
+  const { snapshot, inventory, warnings } = await collectSnapshot(gcp, {
     orgId: values.org,
     maxDepth: Number(values['max-depth']),
     log: (message) => console.error(`  ${message}`),
   });
 
-  const output = values.output ?? `wif-viz-${values.org}-${snapshot.collectedAt.slice(0, 10)}.snapshot.json`;
-  await writeFile(output, `${JSON.stringify(snapshot, null, 2)}\n`);
+  const output = values.output ?? `wif-viz-${values.org}-${snapshot.collectedAt.slice(0, 10)}.snapshot.jsonl.gz`;
+  await writeSnapshotFile(output, snapshot, inventory);
 
   for (const warning of warnings) console.error(`警告: ${warning}`);
   const findings = findingsOf(snapshot);

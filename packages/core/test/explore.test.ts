@@ -11,7 +11,7 @@ const BUCKET = '//storage.googleapis.com/projects/_/buckets/data';
 async function run(bindings: MemberBinding[], maxDepth = 5) {
   const explored = await explore([REPO_PRINCIPAL], createStaticSource(source(bindings)), { maxDepth });
   const graph = buildAccessGraph({ pools: [], providers: [], containers, explored });
-  return { explored, graph, access: computeEffectiveAccess(graph, { inventory: [], rolePermissions: roles }) };
+  return { explored, graph, access: computeEffectiveAccess(graph, { rolePermissions: roles }) };
 }
 
 const wifUser = (target: string): MemberBinding => ({ resource: target, role: 'roles/iam.workloadIdentityUser', member: REPO_PRINCIPAL });

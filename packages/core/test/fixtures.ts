@@ -1,5 +1,5 @@
 import type { StaticSourceData } from '../src/source.ts';
-import type { Container, MemberBinding } from '../src/types.ts';
+import type { Container, InventoryResource, MemberBinding } from '../src/types.ts';
 
 export const ORG = '//cloudresourcemanager.googleapis.com/organizations/1';
 export const FOLDER = '//cloudresourcemanager.googleapis.com/folders/10';
@@ -49,3 +49,10 @@ export function source(bindings: MemberBinding[]): StaticSourceData {
     roles,
   };
 }
+
+/** インベントリの 1 件（proj-a は folder 10 の配下、proj-b は org 直下） */
+export const inventoryResource = (name: string, assetType: string, project: 'a' | 'b' = 'a'): InventoryResource => ({
+  name,
+  assetType,
+  ancestors: project === 'a' ? ['projects/111', 'folders/10', 'organizations/1'] : ['projects/222', 'organizations/1'],
+});

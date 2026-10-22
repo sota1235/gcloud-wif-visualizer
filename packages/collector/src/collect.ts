@@ -2,6 +2,8 @@ import {
   EXPANDABLE_ASSET_TYPES,
   buildAccessGraph,
   computeEffectiveAccess,
+  containerKey,
+  ResourceInventory,
   createSnapshot,
   explore,
   isWifMember,
@@ -31,6 +33,7 @@ export interface CollectOptions {
 
 export interface CollectResult {
   snapshot: Snapshot;
+  inventory: ResourceInventory;
   /** 収集は続行したが注意が必要な事象（ロール定義が取得できなかったなど） */
   warnings: string[];
 }
@@ -58,15 +61,10 @@ export function toContainer(r: ResourceSearchResult): Container | undefined {
   };
 }
 
-export function toInventoryResource(r: ResourceSearchResult): InventoryResource {
-  return {
-    name: r.name ?? '',
-    assetType: r.assetType ?? '',
-    ...(r.project ? { project: r.project } : {}),
-    folders: r.folders ?? [],
-    ...(r.organization ? { organization: r.organization } : {}),
-    ...(r.displayName ? { displayName: r.displayName } : {}),
-  };
+export function toInventoryResource(r: ResourceSearchResult): InventoryResource | undefined {
+  if (!r.name || !r.assetType) return undefined;
+  const ancestors = [r.project, ...(r.folders ?? []), r.organization].filter((a): a is string => !!a);
+  return { name: r.name, assetType: r.assetType, ancestors };
 }
 
 export function toMemberBindings(results: IamPolicySearchResult[], memberFilter: (member: string) => boolean): MemberBinding[] {
@@ -164,18 +162,19 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
 
   log('組織構造とリソースのインベントリを取得しています');
   const [containerResults, wifResults, inventoryResults, wifPolicyResults] = await Promise.all([
-    gcp.searchResources(scope, Object.keys(CONTAINER_TYPES)),
-    gcp.searchResources(scope, ['iam.googleapis.com/WorkloadIdentityPool', 'iam.googleapis.com/WorkloadIdentityPoolProvider']),
-    gcp.searchResources(scope, [...EXPANDABLE_ASSET_TYPES]),
+    gcp.searchResources(scope, Object.keys(CONTAINER_TYPES), toContainer),
+    gcp.searchResources(scope, ['iam.googleapis.com/WorkloadIdentityPool', 'iam.googleapis.com/WorkloadIdentityPoolProvider'], (r) => r),
+    gcp.searchResources(scope, [...EXPANDABLE_ASSET_TYPES], toInventoryResource),
     gcp.searchIamPolicies(scope, 'policy:workloadIdentityPools'),
   ]);
 
-  const containers = containerResults.map(toContainer).filter((c): c is Container => c !== undefined);
+  const containers = containerResults;
   // Organization はアセットとして検索できない場合があるため補う
   const orgName = `${CRM}organizations/${options.orgId}`;
   if (!containers.some((c) => c.name === orgName)) containers.push({ name: orgName, type: 'organization', id: options.orgId });
-  const inventory = inventoryResults.map(toInventoryResource);
-  log(`container ${containers.length} 件、インベントリ ${inventory.length} 件`);
+  const inventory = new ResourceInventory(containers, inventoryResults);
+  inventoryResults.length = 0;
+  log(`container ${containers.length} 件、インベントリ ${inventory.size} 件`);
 
   log('WIF の Pool / Provider の詳細を取得しています');
   const iamPath = (name: string | null | undefined) => (name ?? '').replace('//iam.googleapis.com/', '');
@@ -193,7 +192,7 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
   const bindingsCache = new Map<string, Promise<MemberBinding[]>>();
   const rolesCache = new Map<string, Promise<string[]>>();
   const containersByName = new Map(containers.map((c) => [c.name, c]));
-  const serviceAccountInventory = inventory.filter((r) => r.assetType === 'iam.googleapis.com/ServiceAccount');
+  const serviceAccountInventory = [...inventory].filter((r) => r.assetType === 'iam.googleapis.com/ServiceAccount');
 
   const source: AccessSource = {
     bindingsForMember(member) {
@@ -220,9 +219,9 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
     async serviceAccountsUnder(container) {
       const target = containersByName.get(container);
       if (!target) return [];
-      const key = target.type === 'project' ? `projects/${target.projectNumber}` : `${target.type === 'folder' ? 'folders' : 'organizations'}/${target.id}`;
+      const key = containerKey(target);
       return serviceAccountInventory
-        .filter((r) => r.project === key || r.organization === key || r.folders.includes(key))
+        .filter((r) => r.ancestors.includes(key))
         .map((r) => serviceAccountEmailFromResource(r.name))
         .filter((e): e is string => e !== undefined);
     },
@@ -238,7 +237,7 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
 
   const existingServiceAccounts = existingServiceAccountsOf(explored, serviceAccountInventory, containers);
   const graph = buildAccessGraph({ pools: wifPools, providers: wifProviders, containers, explored, existingServiceAccounts });
-  const effectiveAccess = computeEffectiveAccess(graph, { inventory, rolePermissions });
+  const effectiveAccess = computeEffectiveAccess(graph, { rolePermissions, assetTypeOf: (name) => inventory.get(name)?.assetType });
   log(`ノード ${graph.nodes.size} 件、エッジ ${graph.edges.size} 件、実効アクセス ${effectiveAccess.length} 件`);
 
   const org = containersByName.get(orgName);
@@ -250,7 +249,9 @@ export async function collectSnapshot(gcp: GcpClient, options: CollectOptions): 
       roles: rolePermissions,
       graph,
       effectiveAccess,
+      inventory,
     }),
+    inventory,
     warnings,
   };
 }
