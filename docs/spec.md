@@ -66,13 +66,14 @@ type EffectiveAccess = {
   role: string;
   grantedOn: string;       // バインディングがある箇所（例: //cloudresourcemanager.googleapis.com/projects/foo）
   grantedOnKind: 'container' | 'resource';
-  resources: { name: string; assetType?: string }[];  // このロールで操作できる実リソース（7 章）
+  assetTypes: string[];    // このロールで操作できる実リソースのアセットタイプ（7 章、17.1）
   unmappedPermissionCount: number;  // 対応表で展開できなかった permission の数
   conditional: boolean;    // 経路上に IAM Condition があるか
 };
 ```
 
-- **1 行 = 1 つの付与（経路 × ロール × 付与箇所）とし、展開した実リソースは行の中に一覧で持つ。** 行を実リソースごとに分けると、org レベルの付与で行数が爆発するため。
+- **1 行 = 1 つの付与（経路 × ロール × 付与箇所）とする。** 行を実リソースごとに分けると、org レベルの付与で行数が爆発するため。
+- **到達できる実リソースは「付与先 × アセットタイプ」で表し、一覧は行に持たない（17.1）。** container への付与なら付与先の配下にある、そのアセットタイプのリソースすべてに到達できる。
 - 条件だけが異なる同じ付与は 1 行にまとめ、条件なしの付与が 1 つでもあれば `conditional: false` とする。
 
 ### 注意点
@@ -85,14 +86,14 @@ type EffectiveAccess = {
 ## 4. アーキテクチャ
 
 ```
-wif-viz collect --org <ORG_ID> -o snapshot.json    # GCP API → 正規化済みスナップショット
-wif-viz serve snapshot.json [--base old.json]      # ローカル Web UI（--base で差分モード）
-wif-viz diff old.json new.json [--format text|json|markdown]
+wif-viz collect --org <ORG_ID> -o snapshot.jsonl.gz    # GCP API → 正規化済みスナップショット
+wif-viz serve snapshot.jsonl.gz [--base old.jsonl.gz]  # ローカル Web UI（--base で差分モード）
+wif-viz diff old.jsonl.gz new.jsonl.gz [--format text|json|markdown]
 ```
 
 - 収集と表示を分離する。表示時に GCP 認証が不要になり、スナップショットの保存・共有・差分比較ができる。
 - 認証は Application Default Credentials を使う。
-- 現状（v0.9）は `pnpm wif-viz collect` / `pnpm wif-viz serve` として tsx で実行する。`serve` は Vite の開発サーバーをプログラムから起動し、`/api/snapshot` でスナップショットを返す。配布用のビルドは後続。
+- 現状（v0.9）は `pnpm wif-viz collect` / `pnpm wif-viz serve` として tsx で実行する。`serve` は Vite の開発サーバーをプログラムから起動し、`/api/snapshot` でスナップショット、`/api/resources` で実リソースの一覧を返す（17.3）。配布用のビルドは後続。
 
 ### collector の実装方針
 
@@ -115,7 +116,7 @@ wif-viz diff old.json new.json [--format text|json|markdown]
    - 訪問済みの SA はスキップする（循環対策）。最大深さは `--max-depth`（デフォルト 5）で指定する
    - 自分自身への impersonation（SA に自身の tokenCreator が付いているケース）は self-loop として除外する
 6. **リソース展開**: 7 章
-7. **正規化**: グラフを構築し、Workload 推定、EffectiveAccess 生成、Lint を実行して `snapshot.json` を出力する
+7. **正規化**: グラフを構築し、Workload 推定、EffectiveAccess 生成、Lint を実行してスナップショット（17.2）を出力する
 
 ### 必要な権限（すべて読み取り専用、org レベル）
 
@@ -126,15 +127,20 @@ wif-viz diff old.json new.json [--format text|json|markdown]
 
 ## 5. スナップショット形式
 
+gzip 圧縮した JSON Lines（`*.snapshot.jsonl.gz`）。1 行目がスナップショット、2 行目以降がインベントリ（17.2）。
+
 ```jsonc
 {
-  "schemaVersion": 1,
+  "type": "snapshot",
+  "schemaVersion": 2,
   "collectedAt": "2026-10-19T00:00:00Z",
   "org": { "id": "123", "displayName": "example.com" },
   "options": { "maxDepth": 5 },
   "roles": { "roles/viewer": ["..."] },   // 出現したロール → permission（Lint と UI で使う）
   "nodes": [...], "edges": [...],
-  "effectiveAccess": [...]
+  "effectiveAccess": [...],
+  "resourceCounts": {...},                 // container → アセットタイプ → 配下のリソース数（17.1）
+  "targetResources": {...}                 // リソースへの付与の付与先 → アセットタイプと祖先の container（17.1）
 }
 ```
 
@@ -200,7 +206,7 @@ Cloud Storage バケット、BigQuery データセット/テーブル、Secret M
 - 対応表にない permission は、container 単位の権限として**数だけ**を記録する（`unmappedPermissionCount`）。predefined ロールのほとんどは `resourcemanager.projects.get` のような周辺の permission を含むため、それらを行として残すと付与ごとに重複が生じる。
 - 個別のリソースへの付与（バケットの IAM など）は、そのリソースだけを対象にする。SA も実リソースの 1 つとして扱う。
 - 実データで、core の実装と PoC の自前方式（(a)）の結果が一致することを確認した。差分は SA リソースへの付与 5 件だけで、これは PoC では意図的に除外していたもの。
-- 展開後の行数が膨らむため、UI ではデフォルトで「アセットタイプ × container」に集約して表示し、ドリルダウンで個別のリソースを見せる。
+- 展開後の行数が膨らむため、UI ではデフォルトで「アセットタイプ × container」に集約して表示し、ドリルダウンで個別のリソースを見せる（一覧はサーバーからページ単位で取得する。17.3）。
 
 ### Policy Analyzer との比較（PoC 結果）
 
@@ -233,7 +239,7 @@ MVP では、実際にデプロイできるかまでは判定せず、**actAs �
 
 - **比較単位**:
   - EffectiveAccess の行の追加・削除（キーは principal + 付与箇所 + role + path）
-  - 同じ行で、到達できるリソースが増減した場合や、IAM Condition の有無が変わった場合は「変更」として扱う
+  - 同じ行で、到達できるリソースが増減した場合や、IAM Condition の有無が変わった場合は「変更」として扱う（判定方法は 17.4）
   - 設定の変更（Provider / Pool）。変更されたフィールド名を付ける
   - Lint の新規発生・解消（Finding の ID で比較する）
 - 異なる Org のスナップショットは比較しない。
@@ -425,3 +431,109 @@ Lint の検出結果を、重要度の高い順に「対応したほうがいい
 - ノードを React コンポーネントとして作れるので、Lint バッジ、ロール一覧、展開ボタン、対応推奨リストとの連携を作りやすい。
 - 実際に PoC の画面を触ったうえで判断した。
 - 数千ノードの全体表示が必要になった場合は、概観表示だけ Cytoscape.js に切り替えることを検討する。
+
+## 17. 大規模 Org への対応（v1.0）
+
+リソースが数百万件規模の Org で `collect` を実行したところ、次の問題が起きた。
+
+| 問題 | 原因 |
+|---|---|
+| スナップショットを書き出せない（`Invalid string length`） | 実効アクセスの各行が展開した実リソースの一覧を持つため、org / folder への付与があると同じリソースが行の数だけ重複する。JSON 全体が V8 の文字列長の上限を超える |
+| メモリ不足（デフォルトのヒープ上限で停止） | インベントリと、行ごとの展開結果をすべてメモリに持つ |
+| `SearchAllIamPolicies` のクォータ超過（1 分あたりの上限） | impersonation の探索で identity ごとに API を呼ぶ。quota project を他の用途と共有していると、さらに起きやすい |
+| 収集に時間がかかる（インベントリの取得だけで数十分） | `searchAllResources` のページングを直列で行う。失敗すると最初からやり直しになる |
+
+**方針: データは減らさず、重複をなくす。** 到達できるリソースはすべて記録したまま、スナップショットの形式と収集方法を変える。
+
+### 17.1 リソース集合の正規化
+
+実効アクセスの行は、実リソースの一覧ではなく「どのリソースの集合に到達できるか」を、付与先とアセットタイプで持つ。
+
+```ts
+type EffectiveAccess = {
+  // ...
+  grantedOn: string;
+  grantedOnKind: 'container' | 'resource';
+  /** container への付与: 付与先の配下にある、このアセットタイプのリソースすべて */
+  /** リソースへの付与: そのリソース自身のアセットタイプ（インベントリにない場合は空） */
+  assetTypes: string[];
+};
+```
+
+- container 配下のリソースの一覧は、スナップショット内のインベントリ（17.2）から必要なときに求める。行には持たせない。
+- **件数はインベントリを読まずに求められるようにする。** スナップショットに「container × アセットタイプ → 配下のリソース数」の表（`resourceCounts`）を持たせる。表の大きさは container 数 × アセットタイプ数程度で、リソース数に依存しない。
+- 複数の行にまたがる重複なしの件数（Lint の影響範囲、ロール検索のリソース数、差分）は、アセットタイプごとに次のように求める（`createResourceCounter`）。
+  1. 対象の container から、祖先が同じ集合に含まれるものを除く（祖先が含まれていれば、その配下はすでに数えられている）
+  2. 残った container は互いに祖先・子孫の関係にないので、配下のリソースは重ならない。`resourceCounts` の値を足し合わせる
+  3. リソースへの付与は、同じアセットタイプで祖先の container が対象に含まれていなければ 1 件として足す。判定のため、付与先のリソースについては祖先を `targetResources` に持たせる（件数は付与の数程度）。インベントリにないリソースは 1 件として足す
+- 表示用の resourceGroup（identity × 付与箇所 × アセットタイプ）は、container への付与ならアセットタイプが同じリソースすべてになる。そのため「どのロールで操作できるか」はリソースごとではなく resourceGroup ごとに持つ。配下にリソースがないアセットタイプの resourceGroup は作らない。
+
+### 17.2 スナップショットの形式（schemaVersion 2）
+
+1 つのファイルに、gzip 圧縮した JSON Lines で書き出す（`*.snapshot.jsonl.gz`）。
+
+```jsonc
+// 1 行目: グラフと実効アクセス（実リソースの一覧を含まないので小さい）
+{ "type": "snapshot", "schemaVersion": 2, "collectedAt": "...", "org": {...}, "options": {...},
+  "roles": {...}, "nodes": [...], "edges": [...], "effectiveAccess": [...],
+  "containers": [...], "resourceCounts": {...}, "targetResources": [...] }
+// 2 行目以降: インベントリ（1 行 1 リソース）
+{ "type": "resource", "name": "...", "assetType": "...", "ancestors": ["projects/..", "folders/..", "organizations/.."] }
+```
+
+- 書き出しも読み込みもストリームで行い、ファイル全体を 1 つの文字列にしない。
+- インベントリは、展開対象のアセットタイプ（7 章）のリソースだけを入れる。行ごとの重複はないので、件数は Org 内の対象リソース数と同じになる。
+- schemaVersion 1 のスナップショットは読み込めない（8 章のとおりエラーにする）。gzip でないファイルを渡した場合は、旧形式の可能性があることをエラーで伝える。
+- ストリームの読み書きは `@wif-viz/core/node` に置く。core の本体はブラウザでも読み込むため、Node の API に依存させない。
+- 合成データ（インベントリ 250 万件、container 1,000 件）での計測: 書き出し 3 秒、ファイルサイズ 28 MB（1 行目は 0.4 MB）、全体の読み込み 6 秒、ヒープ約 1.3 GB。
+
+### 17.3 serve と Web UI
+
+- `/api/snapshot` は 1 行目（グラフ、実効アクセス、件数の表）だけを返す。Lint、ロール検索、概観表示、フォーカス表示は、これだけで v0.9 と同じように動く。
+- 実リソースの一覧は API で取得する。
+  - `GET /api/resources?container=<name>&assetType=<type>&offset=&limit=`: container 配下の指定したアセットタイプのリソースを名前順に返す。件数も返す（`limit` のデフォルトは 100、上限は 1,000）
+  - 詳細パネルの resourceGroup のリソース一覧は、この API でページ分割して表示する（初期表示は先頭 100 件）
+- サーバーは起動時にインベントリをストリームで読み、アセットタイプ × container の索引を作ってメモリに持つ。
+
+### 17.4 差分
+
+- 行の追加・削除は v0.9 と同じ（キーは principal + 付与箇所 + role + path）。
+- 「到達できるリソースの増減」は、行のアセットタイプと、件数の表から求めたリソース数を比較して判定する。
+- 両方のインベントリを渡した場合は、増減したリソースの名前まで求める。件数が同じでもリソースが入れ替わった場合を検出できる（CLI 用。インベントリはストリームで読む）。
+
+### 17.5 Cloud Asset のエクスポートからの収集（`collect --from-export`）
+
+API を個別に呼ぶ代わりに、`gcloud asset export` で書き出したファイルを入力にできるようにする。
+
+```sh
+gcloud asset export --organization=<ORG_ID> --content-type=resource \
+  --output-path=gs://<BUCKET>/wif-viz/resource.json --billing-project=<PROJECT_ID>
+gcloud asset export --organization=<ORG_ID> --content-type=iam-policy \
+  --output-path=gs://<BUCKET>/wif-viz/iam-policy.json --billing-project=<PROJECT_ID>
+gcloud storage cp 'gs://<BUCKET>/wif-viz/*' ./export/
+
+pnpm wif-viz collect --org <ORG_ID> --from-export ./export/ -o my-org.snapshot.jsonl.gz
+```
+
+| 収集する情報 | API（v0.9） | `--from-export` |
+|---|---|---|
+| org / folder / project | `searchAllResources` | resource のエクスポート（`ancestors` と `resource.data`） |
+| インベントリ | `searchAllResources` | resource のエクスポート（展開対象のアセットタイプだけを読む） |
+| Pool / Provider の詳細 | IAM API（`get`） | resource のエクスポートの `resource.data`（要検証。足りない項目があれば IAM API で補う） |
+| IAM のバインディング | `searchAllIamPolicies`（identity ごと） | iam-policy のエクスポート。読み込み時に member → バインディングの索引を作り、探索中は API を呼ばない |
+| カスタムロールの定義 | IAM API（`roles.get`） | resource のエクスポート（`iam.googleapis.com/Role`） |
+| predefined ロールの定義 | IAM API（`roles.get`） | IAM API（`roles.get`）。出現したロールの数だけ呼ぶ |
+
+- エクスポートは JSON Lines で、ファイルが大きいため 1 行ずつストリームで読む。
+- iam-policy の索引には、探索に関係する member（`serviceAccount:` と WIF の `principal://` / `principalSet://`）のバインディングだけを入れる。
+- エクスポートはクォータの影響を受けにくく、一度取得すれば `collect` を何度でも実行し直せる。収集ロジックの改善や、ほかの `--max-depth` を試すときも API を呼ばない。
+- エクスポートには `cloudasset.assets.exportResource` / `exportIamPolicy`（`roles/cloudasset.viewer` に含まれる）と、出力先の GCS バケットへの書き込み権限が必要。
+- `--from-export` を使う場合でも、インベントリと IAM の索引はメモリに持つ。必要に応じて `NODE_OPTIONS=--max-old-space-size=<MB>` でヒープの上限を上げる（README に記載する）。
+
+### 17.6 実装の順序
+
+1. スナップショット形式の変更（17.1、17.2）と、core（Lint、差分、件数の計算）の対応（実装済み）
+2. serve と Web UI の対応（17.3）（実装済み）
+3. `collect --from-export`（17.5）
+
+1 と 2 がないと、収集方法を変えても書き出しで失敗するため、この順で進める。

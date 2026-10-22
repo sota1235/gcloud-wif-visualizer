@@ -39,23 +39,30 @@ gcloud auth application-default login
 ### 1. スナップショットを収集する
 
 ```sh
-pnpm wif-viz collect --org <ORG_ID> --quota-project <PROJECT_ID> -o my-org.snapshot.json
+pnpm wif-viz collect --org <ORG_ID> --quota-project <PROJECT_ID> -o my-org.snapshot.jsonl.gz
 ```
 
 | オプション | 説明 | デフォルト |
 |---|---|---|
 | `--org <id>` | 対象の Organization ID（必須） | |
-| `-o, --output <path>` | 出力先 | `wif-viz-<org>-<日付>.snapshot.json` |
+| `-o, --output <path>` | 出力先 | `wif-viz-<org>-<日付>.snapshot.jsonl.gz` |
 | `--max-depth <n>` | impersonation を辿る SA の段数の上限 | `5` |
 | `--quota-project <id>` | API のクォータを付ける project（ADC の quota project を上書き） | ADC の設定 |
 | `--concurrency <n>` | API の同時呼び出し数 | `8` |
 
 収集が終わると、Lint の件数（high / medium / low）が表示されます。
 
+スナップショットは gzip 圧縮した JSON Lines で、到達できるリソースを判定するためのインベントリも含みます。
+
+#### 大規模な Organization で収集する場合
+
+- リソースが数百万件規模になると、Node.js のデフォルトのヒープ上限では足りないことがあります。`NODE_OPTIONS=--max-old-space-size=8192` のように上限を上げてください
+- Cloud Asset の `SearchAllIamPolicies` には、quota project ごとに 1 分あたりの上限があります（デフォルトは 100 回）。`RESOURCE_EXHAUSTED` で止まる場合は `--concurrency` を下げるか、他の用途と共有していない project を `--quota-project` に指定してください
+
 ### 2. ブラウザで表示する
 
 ```sh
-pnpm wif-viz serve my-org.snapshot.json
+pnpm wif-viz serve my-org.snapshot.jsonl.gz
 ```
 
 http://127.0.0.1:4000/ を開いてください（`--port` で変更できます）。表示には GCP の認証は不要です。
@@ -92,7 +99,7 @@ impersonation は、`iam.serviceAccounts.getAccessToken` などに加えて `iam
 
 ## 注意事項
 
-- **スナップショットには組織の権限情報が含まれます。** 取り扱いに注意してください。`*.snapshot.json` は `.gitignore` の対象です
+- **スナップショットには組織の権限情報が含まれます。** 取り扱いに注意してください。`*.snapshot.jsonl.gz` は `.gitignore` の対象です
 - `serve` は localhost（`127.0.0.1`）でのみ待ち受けます
 - IAM Conditions は評価せず、条件付きであることだけを表示します。Deny ポリシーや Principal Access Boundary は考慮していません
 - GKE 用の Workload Identity Federation（`*.svc.id.goog`）は対象外です
