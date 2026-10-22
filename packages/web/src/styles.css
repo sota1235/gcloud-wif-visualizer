@@ -65,7 +65,8 @@ code {
 
 .app {
   display: grid;
-  grid-template-columns: minmax(300px, 380px) 1fr;
+  /* サイドバー / 境界 / グラフ。サイドバーの幅は App とドラッグ中の境界から --sidebar-width で指定する */
+  grid-template-columns: var(--sidebar-width, 360px) auto 1fr;
   grid-template-rows: auto 1fr;
   height: 100vh;
 }
@@ -113,7 +114,6 @@ code {
 }
 
 .sidebar {
-  border-right: 1px solid var(--border);
   background: var(--surface);
   overflow-y: auto;
   overflow-x: hidden;
@@ -125,6 +125,9 @@ code {
 
 .tabs {
   display: flex;
+  /* タブが収まらない幅では横にスクロールする */
+  overflow-x: auto;
+  scrollbar-width: thin;
   position: sticky;
   top: 0;
   background: var(--surface);
@@ -133,9 +136,9 @@ code {
 }
 
 .tabs button {
-  flex: 1;
-  min-width: 0;
-  padding: 10px 6px;
+  flex: 1 0 auto;
+  padding: 10px 10px;
+  white-space: nowrap;
   font-size: 13px;
   border: none;
   background: none;
@@ -275,6 +278,22 @@ code {
   color: var(--muted);
 }
 
+.sidebar-resizer {
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  border-left: 2px solid var(--surface);
+  border-right: 2px solid var(--surface);
+  touch-action: none;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer:focus-visible,
+.sidebar-resizer.dragging {
+  background: var(--accent);
+  outline: none;
+}
+
 .graph {
   position: relative;
   min-height: 0;
@@ -296,6 +315,11 @@ code {
 .graph-placeholder {
   padding: 48px 24px;
   color: var(--muted);
+}
+
+.graph-placeholder p {
+  margin: 0 0 8px;
+  line-height: 1.6;
 }
 
 .node-card {

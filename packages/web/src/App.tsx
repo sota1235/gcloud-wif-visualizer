@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { findingsOf, parseSnapshot, type Finding, type Severity, type Snapshot } from '@wif-viz/core';
 import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
@@ -6,10 +6,14 @@ import { downstreamSubgraph, focusSubgraph, overviewGraph, pathSubgraph } from '
 import { GraphView } from './GraphView.tsx';
 import { narrowToWorkload, reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
 import { RoleSearch } from './RoleSearch.tsx';
-import { buildViewGraph, findingFocus } from './view-graph.ts';
+import { SidebarResizer, useSidebarWidth } from './SidebarResizer.tsx';
+import { buildViewGraph, findingFocus, type ViewGraph } from './view-graph.ts';
 import { WorkloadList } from './WorkloadList.tsx';
 
 type Tab = 'findings' | 'workloads' | 'roles';
+
+/** これを超えるノード数のグラフは、目で追えず描画も重いため、既定では表示しない */
+const MAX_GRAPH_NODES = 500;
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -25,6 +29,9 @@ export function App() {
   const [workloadQuery, setWorkloadQuery] = useState('');
   // 検索結果のロールを選んだうえで、さらに 1 つのワークロードに絞る
   const [searchWorkload, setSearchWorkload] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
+  // ノード数が多くても表示するよう選んだグラフ。表示するグラフが変わると、また非表示に戻る
+  const [largeGraphShown, setLargeGraphShown] = useState<ViewGraph | null>(null);
 
   useEffect(() => {
     fetch('/api/snapshot')
@@ -95,10 +102,11 @@ export function App() {
     setSelectedNodeId(null);
   };
   const highlightIds = focus ? focus.highlight : focusIds ?? [];
+  const graphHidden = displayed.nodes.size > MAX_GRAPH_NODES && largeGraphShown !== displayed;
   const selectedNode = selectedNodeId ? view.nodes.get(selectedNodeId) : undefined;
 
   return (
-    <div className="app">
+    <div className="app" style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
       <header className="app-header">
         <h1>WIF Visualizer</h1>
         <span className="muted">
@@ -161,6 +169,7 @@ export function App() {
           <WorkloadList workloads={workloads} query={workloadQuery} onQueryChange={setWorkloadQuery} selectedId={focusIds?.[0] ?? null} onSelect={focusOn} />
         )}
       </nav>
+      <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
 
       <main className="graph">
         <div className="graph-caption">
@@ -175,7 +184,20 @@ export function App() {
                 : '概観（Workload → principal → SA）'}
           <span className="muted"> ・ ノード {displayed.nodes.size}</span>
         </div>
-        <GraphView graph={displayed} highlightIds={highlightIds} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
+        {graphHidden ? (
+          <div className="graph-placeholder">
+            <p>
+              ノードが {displayed.nodes.size} 件あり、多すぎるためグラフを表示していません（{MAX_GRAPH_NODES} 件まで表示します）。
+              <br />
+              左のリストでワークロードや検出結果を選ぶか、検索で絞り込んでください。
+            </p>
+            <button type="button" className="primary" onClick={() => setLargeGraphShown(displayed)}>
+              このまま表示する（重くなることがあります）
+            </button>
+          </div>
+        ) : (
+          <GraphView graph={displayed} highlightIds={highlightIds} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
+        )}
         {selectedNode && (
           <DetailPanel
             node={selectedNode}
