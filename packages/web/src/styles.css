@@ -116,7 +116,11 @@ code {
   border-right: 1px solid var(--border);
   background: var(--surface);
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 0;
+  /* グリッドの子要素は中身より狭くなれないため、長い ID やロール名で列からはみ出さないようにする */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .tabs {
@@ -130,8 +134,8 @@ code {
 
 .tabs button {
   flex: 1;
+  min-width: 0;
   padding: 10px 6px;
-  white-space: nowrap;
   font-size: 13px;
   border: none;
   background: none;
@@ -374,6 +378,7 @@ code {
   border-radius: 8px;
   padding: 12px;
   box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+  overflow-wrap: anywhere;
 }
 
 .detail-head {
@@ -381,7 +386,15 @@ code {
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  overflow-wrap: anywhere;
+}
+
+.detail-head strong {
+  min-width: 0;
+}
+
+.detail-head button {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .detail-panel dl {
