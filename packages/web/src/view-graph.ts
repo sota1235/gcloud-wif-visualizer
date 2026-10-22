@@ -1,4 +1,4 @@
-import type { EffectiveAccess, Finding, GraphNode, Snapshot } from '@wif-viz/core';
+import type { Finding, GraphNode, Snapshot } from '@wif-viz/core';
 
 export type ViewNodeType = 'workload' | 'principal' | 'serviceAccount' | 'grant' | 'resourceGroup';
 export type ViewEdgeKind = 'resolves' | 'impersonate' | 'actAs' | 'role' | 'resources';
@@ -10,14 +10,16 @@ export interface ViewNode {
   sublabel?: string;
   /** 元のグラフノード（workload / principal / SA） */
   source?: GraphNode;
-  /** grant: このノードに付与されているロール */
+  /** grant: このノードに付与されているロール。resourceGroup: このまとまりのリソースを操作できるロール */
   roles?: string[];
   /** grant / resourceGroup: 付与箇所 */
   grantedOn?: string;
   /** grant / resourceGroup: ロールを持つ identity */
   identity?: string;
-  /** resourceGroup: リソース一覧 */
-  resources?: { name: string; assetType?: string; roles: string[] }[];
+  /** resourceGroup: アセットタイプ */
+  assetType?: string;
+  /** resourceGroup: リソース数（一覧はサーバーから取得する） */
+  resourceCount?: number;
   /** このノードに関連する検出結果の最大重要度 */
   severity?: Finding['severity'];
 }
@@ -100,36 +102,34 @@ export function buildViewGraph(snapshot: Snapshot, findings: Finding[] = []): Vi
     }
   }
 
-  // 実リソースは「identity × 付与箇所 × アセットタイプ」でまとめる（container への付与のみ）
-  const rowsByGroup = new Map<string, EffectiveAccess[]>();
+  // 実リソースは「identity × 付与箇所 × アセットタイプ」でまとめる（container への付与のみ）。
+  // container への付与では、配下の同じアセットタイプのリソースすべてに到達できるので、ロールはまとまり単位で持つ
+  const groups = new Map<string, { identity: string; grantedOn: string; assetType: string; roles: Set<string> }>();
   for (const row of snapshot.effectiveAccess) {
     if (row.grantedOnKind !== 'container') continue;
     const identity = row.path.at(-1)!;
-    for (const resource of row.resources) {
-      const id = resourceGroupId(identity, row.grantedOn, resource.assetType ?? 'unknown');
-      rowsByGroup.set(id, [...(rowsByGroup.get(id) ?? []), row]);
+    for (const assetType of row.assetTypes) {
+      if (!snapshot.resourceCounts[row.grantedOn]?.[assetType]) continue;
+      const id = resourceGroupId(identity, row.grantedOn, assetType);
+      const group = groups.get(id) ?? { identity, grantedOn: row.grantedOn, assetType, roles: new Set<string>() };
+      group.roles.add(row.role);
+      groups.set(id, group);
     }
   }
-  for (const [id, rows] of rowsByGroup) {
-    const [, identity = '', grantedOn = '', assetType = ''] = id.split('|');
-    const resources = new Map<string, { name: string; assetType?: string; roles: Set<string> }>();
-    for (const row of rows) {
-      for (const r of row.resources.filter((x) => (x.assetType ?? 'unknown') === assetType)) {
-        const entry = resources.get(r.name) ?? { name: r.name, ...(r.assetType ? { assetType: r.assetType } : {}), roles: new Set<string>() };
-        entry.roles.add(row.role);
-        resources.set(r.name, entry);
-      }
-    }
+  for (const [id, group] of groups) {
+    const resourceCount = snapshot.resourceCounts[group.grantedOn]![group.assetType]!;
     nodes.set(id, {
       id,
       type: 'resourceGroup',
-      label: `${shortAssetType(assetType)} ×${resources.size}`,
-      sublabel: shortResource(grantedOn),
-      grantedOn,
-      identity,
-      resources: [...resources.values()].map((r) => ({ ...r, roles: [...r.roles].sort() })).sort((a, b) => a.name.localeCompare(b.name)),
+      label: `${shortAssetType(group.assetType)} ×${resourceCount}`,
+      sublabel: shortResource(group.grantedOn),
+      grantedOn: group.grantedOn,
+      identity: group.identity,
+      assetType: group.assetType,
+      resourceCount,
+      roles: [...group.roles].sort(),
     });
-    addEdge(grantNodeId(identity, grantedOn), id, 'resources');
+    addEdge(grantNodeId(group.identity, group.grantedOn), id, 'resources');
   }
 
   for (const grant of nodes.values()) {

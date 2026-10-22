@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   GITHUB_ISSUER,
+  ResourceInventory,
   buildAccessGraph,
   computeEffectiveAccess,
   createSnapshot,
@@ -62,17 +63,18 @@ async function setup() {
     disabled: false,
   };
   const graph = buildAccessGraph({ pools: [], providers: [provider], containers, explored });
-  const inventory = [
-    { name: '//storage.googleapis.com/a', assetType: 'storage.googleapis.com/Bucket', project: 'projects/111', folders: [], organization: 'organizations/1' },
-    { name: '//storage.googleapis.com/b', assetType: 'storage.googleapis.com/Bucket', project: 'projects/111', folders: [], organization: 'organizations/1' },
-  ];
+  const inventory = new ResourceInventory(containers, [
+    { name: '//storage.googleapis.com/a', assetType: 'storage.googleapis.com/Bucket', ancestors: ['projects/111', 'organizations/1'] },
+    { name: '//storage.googleapis.com/b', assetType: 'storage.googleapis.com/Bucket', ancestors: ['projects/111', 'organizations/1'] },
+  ]);
   const snapshot = createSnapshot({
     org: { id: '1' },
     collectedAt: new Date('2026-10-20T00:00:00Z'),
     options: { maxDepth: 5 },
     roles,
     graph,
-    effectiveAccess: computeEffectiveAccess(graph, { inventory, rolePermissions: roles }),
+    effectiveAccess: computeEffectiveAccess(graph, { rolePermissions: roles }),
+    inventory,
   });
   return { snapshot, view: buildViewGraph(snapshot) };
 }
