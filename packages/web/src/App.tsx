@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { findingsOf, parseSnapshot, type Finding, type Severity, type Snapshot } from '@wif-viz/core';
+import { findingsOf, parseSnapshot, type Finding, type ResourceMatch, type Severity, type Snapshot } from '@wif-viz/core';
 import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
 import { downstreamSubgraph, focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
@@ -8,6 +8,7 @@ import { narrowToWorkload, reachableRolesAndPermissions, roleFocus, searchAccess
 import { RoleSearch } from './RoleSearch.tsx';
 import { SidebarResizer, useSidebarWidth } from './SidebarResizer.tsx';
 import { buildViewGraph, findingFocus, type ViewGraph } from './view-graph.ts';
+import { workloadsReachingResource } from './workload-filter.ts';
 import { WorkloadList } from './WorkloadList.tsx';
 
 type Tab = 'findings' | 'workloads' | 'roles';
@@ -27,6 +28,7 @@ export function App() {
   const [roleQuery, setRoleQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [workloadQuery, setWorkloadQuery] = useState('');
+  const [workloadResource, setWorkloadResource] = useState<ResourceMatch | null>(null);
   // 検索結果のロールを選んだうえで、さらに 1 つのワークロードに絞る
   const [searchWorkload, setSearchWorkload] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
@@ -70,6 +72,10 @@ export function App() {
     }
     return focusIds ? focusSubgraph(view, focusIds) : overviewGraph(view);
   }, [view, focus, focusIds, searchWorkloadActive, searchWorkload]);
+  const reachingIds = useMemo(
+    () => (snapshot && view && workloadResource ? workloadsReachingResource(snapshot, view, workloadResource) : null),
+    [snapshot, view, workloadResource],
+  );
   const workloads = useMemo(() => (view ? [...view.nodes.values()].filter((n) => n.type === 'workload').sort((a, b) => a.label.localeCompare(b.label)) : []), [view]);
 
   if (error) return <p className="message error">{error}</p>;
@@ -166,7 +172,16 @@ export function App() {
             view={view}
           />
         ) : (
-          <WorkloadList workloads={workloads} query={workloadQuery} onQueryChange={setWorkloadQuery} selectedId={focusIds?.[0] ?? null} onSelect={focusOn} />
+          <WorkloadList
+            workloads={workloads}
+            query={workloadQuery}
+            onQueryChange={setWorkloadQuery}
+            selectedId={focusIds?.[0] ?? null}
+            onSelect={focusOn}
+            resource={workloadResource}
+            onResourceChange={setWorkloadResource}
+            reachingIds={reachingIds}
+          />
         )}
       </nav>
       <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />

@@ -1,3 +1,4 @@
+import type { ResourceMatch } from '@wif-viz/core';
 import type { SnapshotFile } from '@wif-viz/core/node';
 
 export interface ApiResponse {
@@ -11,8 +12,15 @@ export interface ResourcePage {
   items: string[];
 }
 
+export interface ResourceSearchResult {
+  total: number;
+  items: ResourceMatch[];
+}
+
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 1000;
+const DEFAULT_SEARCH_LIMIT = 20;
+const MAX_SEARCH_LIMIT = 100;
 
 const json = (status: number, value: unknown): ApiResponse => ({ status, body: JSON.stringify(value) });
 
@@ -26,6 +34,7 @@ function nonNegativeInteger(value: string | null, fallback: number): number | un
  * Web UI 向けの API。
  * - `/api/snapshot`: インベントリを除いたスナップショット
  * - `/api/resources?container=&assetType=&offset=&limit=`: container 配下の、指定したアセットタイプのリソース（名前順）
+ * - `/api/resource-search?q=&limit=`: 名前で探したリソースと、そのアセットタイプ・祖先の container
  */
 export function createSnapshotApi({ snapshot, inventory }: SnapshotFile) {
   const snapshotBody = JSON.stringify(snapshot);
@@ -43,6 +52,13 @@ export function createSnapshotApi({ snapshot, inventory }: SnapshotFile) {
       const all = inventory.list(container, assetType);
       const page: ResourcePage = { total: all.length, offset, items: all.slice(offset, offset + Math.min(limit, MAX_LIMIT)) };
       return json(200, page);
+    }
+    if (pathname === '/api/resource-search') {
+      const query = params.get('q') ?? '';
+      const limit = nonNegativeInteger(params.get('limit'), DEFAULT_SEARCH_LIMIT);
+      if (limit === undefined) return json(400, { error: 'limit は 0 以上の整数で指定してください' });
+      const result: ResourceSearchResult = inventory.search(query, Math.min(limit, MAX_SEARCH_LIMIT));
+      return json(200, result);
     }
     return json(404, { error: 'not found' });
   };

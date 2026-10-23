@@ -589,3 +589,68 @@ code {
   font-size: 12px;
   margin: -2px 0 8px;
 }
+
+.resource-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.resource-picker > .muted {
+  padding: 12px 12px 0;
+}
+
+.resource-chip {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 12px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+}
+
+.resource-chip button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.resource-candidates ul {
+  list-style: none;
+  margin: 4px 12px 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.resource-candidates button {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.resource-candidates li:last-child button {
+  border-bottom: none;
+}
+
+.resource-candidates button:hover {
+  background: var(--bg);
+}
+
+.hint.error {
+  color: var(--high);
+}

@@ -64,4 +64,30 @@ describe('ResourceInventory', () => {
     expect(inv.targetResource('//storage.googleapis.com/x')).toEqual({ assetType: BUCKET, ancestors: [] });
     expect(inv.resourceCounts()).toEqual({});
   });
+
+  describe('search', () => {
+    it('名前にすべての語を含むリソースを、名前の短い順に祖先の container 付きで返す', () => {
+      const inv = inventory();
+      inv.add(inventoryResource('//storage.googleapis.com/b1-archive', BUCKET));
+
+      expect(inv.search('STORAGE b1', 10)).toEqual({
+        total: 2,
+        items: [
+          { name: '//storage.googleapis.com/b1', assetType: BUCKET, ancestors: [PROJECT_A, FOLDER, ORG] },
+          { name: '//storage.googleapis.com/b1-archive', assetType: BUCKET, ancestors: [PROJECT_A, FOLDER, ORG] },
+        ],
+      });
+    });
+
+    it('一致が上限を超える場合、件数は数えたうえで上限まで返す', () => {
+      const result = inventory().search('storage', 1);
+
+      expect(result.total).toBe(3);
+      expect(result.items.map((r) => r.name)).toEqual(['//storage.googleapis.com/b1']);
+    });
+
+    it('検索語が空の場合、何も返さない', () => {
+      expect(inventory().search('  ', 10)).toEqual({ total: 0, items: [] });
+    });
+  });
 });

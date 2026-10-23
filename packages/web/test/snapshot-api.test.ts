@@ -69,4 +69,18 @@ describe('createSnapshotApi', () => {
   it('不明なパスは 404 を返す', () => {
     expect(api()('/api/unknown', new URLSearchParams()).status).toBe(404);
   });
+
+  it('/api/resource-search は名前に一致するリソースを、アセットタイプと祖先の container 付きで返す', () => {
+    const res = api()('/api/resource-search', new URLSearchParams({ q: 'storage.googleapis.com/b', limit: '5' }));
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({
+      total: 1,
+      items: [{ name: '//storage.googleapis.com/b', assetType: BUCKET, ancestors: [PROJECT, ORG] }],
+    });
+  });
+
+  it('/api/resource-search の limit が不正な場合、400 を返す', () => {
+    expect(api()('/api/resource-search', new URLSearchParams({ q: 'b', limit: '-1' })).status).toBe(400);
+  });
 });

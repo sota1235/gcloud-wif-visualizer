@@ -6,6 +6,14 @@ export function containerKey(container: Container): string {
   return `${container.type === 'folder' ? 'folders' : 'organizations'}/${container.id}`;
 }
 
+/** 名前で探したリソース。ancestors は Org 内の祖先の container */
+export interface ResourceMatch extends TargetResource {
+  name: FullResourceName;
+}
+
+/** 検索で並べ替えの対象にする一致の上限 */
+const SEARCH_CANDIDATES = 5000;
+
 /**
  * 展開対象のアセットタイプのインベントリ。
  * container × アセットタイプで索引を作り、配下のリソースの一覧と件数を引けるようにする。
@@ -76,6 +84,29 @@ export class ResourceInventory implements Iterable<InventoryResource> {
       (counts[container] ??= {})[key.slice(separator + 1)] = list.length;
     }
     return counts;
+  }
+
+  /**
+   * 名前に空白区切りのすべての語を含むリソースを探す（大文字小文字を区別しない）。
+   * 短い名前ほど指定したリソースそのものである可能性が高いため、名前の短い順に返す。
+   */
+  search(query: string, limit: number): { total: number; items: ResourceMatch[] } {
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return { total: 0, items: [] };
+    let total = 0;
+    const candidates: FullResourceName[] = [];
+    for (const name of this.#byName.keys()) {
+      const lower = name.toLowerCase();
+      if (!terms.every((term) => lower.includes(term))) continue;
+      total++;
+      // 一致が非常に多い場合に、すべてを保持して並べ替えないようにする
+      if (candidates.length < SEARCH_CANDIDATES) candidates.push(name);
+    }
+    const items = candidates
+      .sort((a, b) => a.length - b.length || a.localeCompare(b))
+      .slice(0, limit)
+      .map((name) => ({ name, ...this.targetResource(name)! }));
+    return { total, items };
   }
 
   targetResource(name: FullResourceName): TargetResource | undefined {

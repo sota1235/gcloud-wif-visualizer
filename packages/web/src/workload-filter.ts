@@ -1,5 +1,6 @@
+import type { ResourceMatch, Snapshot } from '@wif-viz/core';
 import { matchesTerms } from './role-search.ts';
-import type { ViewNode } from './view-graph.ts';
+import type { ViewGraph, ViewNode } from './view-graph.ts';
 
 /** ワークロードの絞り込みで照合する文字列（ラベル、principal、Provider、claim の制約の値） */
 export function workloadSearchText(node: ViewNode): string {
@@ -14,4 +15,20 @@ export function workloadSearchText(node: ViewNode): string {
 /** 空白区切りのすべての語を含むワークロードに絞り込む。空の場合はすべて返す */
 export function filterWorkloads(workloads: ViewNode[], query: string): ViewNode[] {
   return query.trim() === '' ? workloads : workloads.filter((w) => matchesTerms(workloadSearchText(w), query));
+}
+
+/**
+ * リソースに到達できるワークロードの ID。
+ * リソースそのものへの付与と、祖先の container への付与のうちそのアセットタイプに届くもの（実効アクセス）から判定する。
+ */
+export function workloadsReachingResource(snapshot: Pick<Snapshot, 'effectiveAccess'>, view: ViewGraph, resource: ResourceMatch): Set<string> {
+  const ancestors = new Set(resource.ancestors);
+  const principals = new Set(
+    snapshot.effectiveAccess
+      .filter((row) =>
+        row.grantedOnKind === 'resource' ? row.grantedOn === resource.name : ancestors.has(row.grantedOn) && row.assetTypes.includes(resource.assetType),
+      )
+      .map((row) => row.principal),
+  );
+  return new Set(view.edges.filter((e) => e.kind === 'resolves' && principals.has(e.target)).map((e) => e.source));
 }

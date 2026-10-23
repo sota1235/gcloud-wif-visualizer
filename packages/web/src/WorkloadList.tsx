@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ResourceMatch } from '@wif-viz/core';
+import { ResourcePicker } from './ResourcePicker.tsx';
 import { useDebouncedValue } from './use-debounced-value.ts';
 import { filterWorkloads } from './workload-filter.ts';
 import type { ViewNode } from './view-graph.ts';
@@ -13,16 +15,25 @@ interface Props {
   onQueryChange: (query: string) => void;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** 到達できるかで絞り込むリソース */
+  resource: ResourceMatch | null;
+  onResourceChange: (resource: ResourceMatch | null) => void;
+  /** resource に到達できるワークロードの ID（resource がない場合は null） */
+  reachingIds: Set<string> | null;
 }
 
-export function WorkloadList({ workloads, query, onQueryChange, selectedId, onSelect }: Props) {
+export function WorkloadList({ workloads, query, onQueryChange, selectedId, onSelect, resource, onResourceChange, reachingIds }: Props) {
   // 入力中は画面全体を再描画しないよう、入力欄の値はここで持ち、止まってから親に渡す
   const [input, setInput] = useState(query);
   const debouncedInput = useDebouncedValue(input, FILTER_DELAY_MS);
   useEffect(() => {
     if (debouncedInput !== query) onQueryChange(debouncedInput);
   }, [debouncedInput, query, onQueryChange]);
-  const filtered = useMemo(() => filterWorkloads(workloads, query), [workloads, query]);
+  const filtered = useMemo(
+    () => filterWorkloads(reachingIds ? workloads.filter((w) => reachingIds.has(w.id)) : workloads, query),
+    [workloads, query, reachingIds],
+  );
+  const filtering = query.trim() !== '' || reachingIds !== null;
 
   return (
     <div className="workloads">
@@ -30,10 +41,11 @@ export function WorkloadList({ workloads, query, onQueryChange, selectedId, onSe
         <span>ワークロードを絞り込む</span>
         <input type="search" value={input} placeholder="例: リポジトリ名、ブランチ、ワークフロー" autoComplete="off" onChange={(e) => setInput(e.target.value)} />
       </label>
+      <ResourcePicker selected={resource} onSelect={onResourceChange} />
       <p className="hint muted">
-        {query.trim() === ''
+        {!filtering
           ? 'リポジトリ名やブランチ、principal などで絞り込めます。空白区切りで複数の語を指定すると、すべてを含むものに絞り込みます。'
-          : `${workloads.length} 件中 ${filtered.length} 件が一致しました。`}
+          : `${workloads.length} 件中 ${filtered.length} 件が一致しました。${resource ? '（指定したリソースに WIF 経由で到達できるもの）' : ''}`}
       </p>
       <ul className="workload-list">
         {filtered.map((w) => (
