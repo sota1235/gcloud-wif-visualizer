@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { findingsOf } from '../src/diff.ts';
 import type { MemberBinding } from '../src/types.ts';
-import { ALL_PRINCIPAL, FOLDER, ORG, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, sa, saMember, saResource } from './fixtures.ts';
+import { ALL_PRINCIPAL, FOLDER, inventoryResource, ORG, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, sa, saMember, saResource } from './fixtures.ts';
 import { buildSnapshot, githubProvider, pool, type SnapshotInput } from './helpers.ts';
 
 const wifUser = (name: string, member = REPO_PRINCIPAL): MemberBinding => ({ resource: saResource(name), role: 'roles/iam.workloadIdentityUser', member });
@@ -21,7 +21,8 @@ describe('lint', () => {
     const [finding] = await findings({
       bindings: [wifUser('deploy'), deployHas('roles/editor')],
       inventory: [
-        { name: '//storage.googleapis.com/a', assetType: 'storage.googleapis.com/Bucket', project: 'projects/111', folders: ['folders/10'], organization: 'organizations/1' },
+        inventoryResource('//storage.googleapis.com/a', 'storage.googleapis.com/Bucket'),
+        inventoryResource('//storage.googleapis.com/b', 'storage.googleapis.com/Bucket', 'b'),
       ],
     });
 

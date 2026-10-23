@@ -5,6 +5,8 @@ export * from './source.ts';
 export * from './explore.ts';
 export * from './graph.ts';
 export * from './effective.ts';
+export * from './inventory.ts';
+export * from './resource-count.ts';
 export * from './snapshot.ts';
 export * from './asset-types.ts';
 export * from './cel.ts';

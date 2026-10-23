@@ -1,18 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { diffSnapshots, isEmptyDiff } from '../src/diff.ts';
-import type { InventoryResource, MemberBinding } from '../src/types.ts';
-import { PROJECT_A, PROJECT_B, REPO_PRINCIPAL, saMember, saResource } from './fixtures.ts';
+import { ResourceInventory } from '../src/inventory.ts';
+import type { MemberBinding } from '../src/types.ts';
+import { containers, inventoryResource, PROJECT_A, PROJECT_B, REPO_PRINCIPAL, saMember, saResource } from './fixtures.ts';
 import { buildSnapshot, githubProvider } from './helpers.ts';
 
 const wifUser: MemberBinding = { resource: saResource('deploy'), role: 'roles/iam.workloadIdentityUser', member: REPO_PRINCIPAL };
 const storageAdmin: MemberBinding = { resource: PROJECT_A, role: 'roles/storage.admin', member: saMember('deploy') };
-const bucket = (name: string): InventoryResource => ({
-  name: `//storage.googleapis.com/${name}`,
-  assetType: 'storage.googleapis.com/Bucket',
-  project: 'projects/111',
-  folders: ['folders/10'],
-  organization: 'organizations/1',
-});
+const bucket = (name: string) => inventoryResource(`//storage.googleapis.com/${name}`, 'storage.googleapis.com/Bucket');
 
 describe('diffSnapshots', () => {
   it('同じ構成なら差分なし', async () => {
@@ -34,16 +29,31 @@ describe('diffSnapshots', () => {
     expect(diffSnapshots(head, base).findings.resolved.map((f) => f.ruleId)).toEqual(['primitive-role']);
   });
 
-  it('同じ付与で到達できるリソースが増減した場合は changed にする', async () => {
-    const base = await buildSnapshot({ bindings: [wifUser, storageAdmin], inventory: [bucket('a'), bucket('b')] });
-    const head = await buildSnapshot({ bindings: [wifUser, storageAdmin], inventory: [bucket('b'), bucket('c')] });
-    const [change] = diffSnapshots(base, head).access.changed;
+  it('同じ付与で到達できるリソースの数が変わった場合は、件数付きで changed にする', async () => {
+    const base = await buildSnapshot({ bindings: [wifUser, storageAdmin], inventory: [bucket('a')] });
+    const head = await buildSnapshot({ bindings: [wifUser, storageAdmin], inventory: [bucket('a'), bucket('b')] });
+    const changed = diffSnapshots(base, head).access.changed;
 
-    expect(change).toMatchObject({
-      addedResources: ['//storage.googleapis.com/c'],
-      removedResources: ['//storage.googleapis.com/a'],
-      conditionalChanged: false,
-    });
+    expect(changed).toHaveLength(1);
+    expect(changed[0]).toMatchObject({ resourceCount: { before: 1, after: 2 }, conditionalChanged: false });
+    expect(changed[0]?.addedResources).toBeUndefined();
+  });
+
+  it('インベントリを渡した場合、件数が同じでも入れ替わったリソースを名前で検出する', async () => {
+    const baseInventory = [bucket('a'), bucket('b')];
+    const headInventory = [bucket('b'), bucket('c')];
+    const base = await buildSnapshot({ bindings: [wifUser, storageAdmin], inventory: baseInventory });
+    const head = await buildSnapshot({ bindings: [wifUser, storageAdmin], inventory: headInventory });
+
+    expect(diffSnapshots(base, head).access.changed).toEqual([]);
+    const inventories = { base: new ResourceInventory(containers, baseInventory), head: new ResourceInventory(containers, headInventory) };
+    expect(diffSnapshots(base, head, { inventories }).access.changed).toMatchObject([
+      {
+        resourceCount: { before: 2, after: 2 },
+        addedResources: ['//storage.googleapis.com/c'],
+        removedResources: ['//storage.googleapis.com/a'],
+      },
+    ]);
   });
 
   it('IAM Condition の有無の変化を changed にする', async () => {

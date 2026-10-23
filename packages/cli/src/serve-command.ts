@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { startServer } from '@wif-viz/web/server';
 
-const USAGE = `使い方: wif-viz serve <snapshot.json> [options]
+const USAGE = `使い方: wif-viz serve <snapshot.jsonl.gz> [options]
 
   --port <n>   待ち受けるポート（デフォルト: 4000）`;
 
@@ -21,7 +21,7 @@ export async function serveCommand(args: string[]): Promise<number> {
   const snapshotPath = resolve(snapshot);
   await access(snapshotPath);
 
-  const server = await startServer({ snapshotPath, port: Number(values.port) });
+  const server = await startServer({ snapshotPath, port: Number(values.port), log: (message) => console.error(`  ${message}`) });
   console.error(`http://127.0.0.1:${values.port}/ で表示しています（Ctrl+C で終了）`);
   await new Promise<void>((done) => {
     const stop = () => server.close().then(done);

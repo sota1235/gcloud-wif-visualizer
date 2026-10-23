@@ -1,4 +1,4 @@
-import { assetTypesForPermissions, serviceAccountEmailFromResource, type Snapshot } from '@wif-viz/core';
+import { assetTypesForPermissions, createResourceCounter, serviceAccountEmailFromResource, type EffectiveAccess, type Snapshot } from '@wif-viz/core';
 import { grantNodeId, type ViewGraph } from './view-graph.ts';
 
 export type SearchMode = 'role' | 'permission';
@@ -75,12 +75,12 @@ export function searchAccess(snapshot: Snapshot, view: ViewGraph, query: string,
     return condition;
   };
 
-  const byRole = new Map<string, { grants: Map<string, RoleGrant>; resources: Set<string>; principals: Set<string> }>();
+  const byRole = new Map<string, { grants: Map<string, RoleGrant>; rows: EffectiveAccess[]; principals: Set<string> }>();
   for (const row of snapshot.effectiveAccess) {
     const condition = conditionOf(row.role);
     if (!condition) continue;
     const identity = row.path.at(-1)!;
-    const entry = byRole.get(row.role) ?? { grants: new Map(), resources: new Set(), principals: new Set() };
+    const entry = byRole.get(row.role) ?? { grants: new Map<string, RoleGrant>(), rows: [] as EffectiveAccess[], principals: new Set<string>() };
     const email = serviceAccountEmailFromResource(row.grantedOn);
     const viewNodeId = email ? `serviceAccount:${email}` : grantNodeId(identity, row.grantedOn);
     const key = `${identity}|${row.grantedOn}`;
@@ -88,13 +88,11 @@ export function searchAccess(snapshot: Snapshot, view: ViewGraph, query: string,
     if (!grant.principals.includes(row.principal)) grant.principals.push(row.principal);
     entry.grants.set(key, grant);
     entry.principals.add(row.principal);
-    for (const r of row.resources) {
-      // permission 検索では、その permission で操作できるアセットタイプのリソースだけを数える
-      if (condition.assetTypes && !condition.assetTypes.has(r.assetType ?? '')) continue;
-      entry.resources.add(r.name);
-    }
+    entry.rows.push(row);
     byRole.set(row.role, entry);
   }
+
+  const countResources = createResourceCounter(snapshot);
 
   return [...byRole]
     .map(([role, entry]) => {
@@ -103,7 +101,8 @@ export function searchAccess(snapshot: Snapshot, view: ViewGraph, query: string,
         role,
         grants: [...entry.grants.values()].sort((a, b) => a.viewNodeId.localeCompare(b.viewNodeId) || a.identity.localeCompare(b.identity)),
         workloads: [...new Set([...entry.principals].flatMap((p) => workloadsByPrincipal.get(p) ?? []))].sort(),
-        resourceCount: entry.resources.size,
+        // permission 検索では、その permission で操作できるアセットタイプのリソースだけを数える
+        resourceCount: countResources(entry.rows, condition.assetTypes ? (type) => condition.assetTypes!.has(type) : undefined),
         ...(condition.matchedPermissions ? { matchedPermissions: condition.matchedPermissions, assetTypes: [...condition.assetTypes!].sort() } : {}),
       };
     })
@@ -128,7 +127,7 @@ export function roleFocus(matches: RoleMatch[], view: ViewGraph) {
       (n) =>
         n.type === 'resourceGroup' &&
         grantKeys.has(`${n.identity}|${n.grantedOn}`) &&
-        n.resources?.some((r) => r.roles.some((role) => isRelevant(role, r.assetType ?? ''))),
+        n.roles?.some((role) => isRelevant(role, n.assetType ?? '')),
     )
     .map((n) => n.id);
   return {
@@ -136,4 +135,12 @@ export function roleFocus(matches: RoleMatch[], view: ViewGraph) {
     upstreamFrom: [...grantIds, ...resourceGroupIds],
     downstreamFrom: [],
   };
+}
+
+/** 検索結果を、1 つのワークロード（の principal）から到達できる付与だけに絞る */
+export function narrowToWorkload(matches: RoleMatch[], view: ViewGraph, workloadId: string): RoleMatch[] {
+  const principals = new Set(view.edges.filter((e) => e.kind === 'resolves' && e.source === workloadId).map((e) => e.target));
+  return matches
+    .map((m) => ({ ...m, workloads: m.workloads.filter((w) => w === workloadId), grants: m.grants.filter((g) => g.principals.some((p) => principals.has(p))) }))
+    .filter((m) => m.grants.length > 0);
 }

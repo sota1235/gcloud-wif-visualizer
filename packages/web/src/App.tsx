@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
-import { findingsOf, parseSnapshot, type Finding, type Severity, type Snapshot } from '@wif-viz/core';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { findingsOf, parseSnapshot, type Finding, type ResourceMatch, type Severity, type Snapshot } from '@wif-viz/core';
 import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
-import { focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
+import { downstreamSubgraph, focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
 import { GraphView } from './GraphView.tsx';
-import { reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
+import { narrowToWorkload, reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
 import { RoleSearch } from './RoleSearch.tsx';
-import { buildViewGraph, findingFocus } from './view-graph.ts';
+import { SidebarResizer, useSidebarWidth } from './SidebarResizer.tsx';
+import { buildViewGraph, findingFocus, type ViewGraph } from './view-graph.ts';
+import { workloadsReachingResource } from './workload-filter.ts';
+import { WorkloadList } from './WorkloadList.tsx';
 
 type Tab = 'findings' | 'workloads' | 'roles';
+
+/** これを超えるノード数のグラフは、目で追えず描画も重いため、既定では表示しない */
+const MAX_GRAPH_NODES = 500;
 
 export function App() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
@@ -21,6 +27,13 @@ export function App() {
   const [searchMode, setSearchMode] = useState<SearchMode>('role');
   const [roleQuery, setRoleQuery] = useState('');
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [workloadQuery, setWorkloadQuery] = useState('');
+  const [workloadResource, setWorkloadResource] = useState<ResourceMatch | null>(null);
+  // 検索結果のロールを選んだうえで、さらに 1 つのワークロードに絞る
+  const [searchWorkload, setSearchWorkload] = useState<string | null>(null);
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
+  // ノード数が多くても表示するよう選んだグラフ。表示するグラフが変わると、また非表示に戻る
+  const [largeGraphShown, setLargeGraphShown] = useState<ViewGraph | null>(null);
 
   useEffect(() => {
     fetch('/api/snapshot')
@@ -39,17 +52,30 @@ export function App() {
     [snapshot, view, roleQuery, searchMode],
   );
   const roleSearchActive = tab === 'roles' && !focusIds && roleMatches.length > 0;
+  const searchWorkloadActive = roleSearchActive && selectedRole !== null && searchWorkload !== null;
   const focus = useMemo(() => {
     if (!view) return null;
     if (selectedFinding) return findingFocus(selectedFinding, view);
-    if (roleSearchActive) return roleFocus(selectedRole ? roleMatches.filter((m) => m.role === selectedRole) : roleMatches, view);
+    if (roleSearchActive) {
+      const selected = selectedRole ? roleMatches.filter((m) => m.role === selectedRole) : roleMatches;
+      if (!searchWorkloadActive) return roleFocus(selected, view);
+      const narrowed = roleFocus(narrowToWorkload(selected, view, searchWorkload!), view);
+      return { ...narrowed, highlight: [searchWorkload!, ...narrowed.highlight] };
+    }
     return null;
-  }, [view, selectedFinding, roleSearchActive, roleMatches, selectedRole]);
+  }, [view, selectedFinding, roleSearchActive, roleMatches, selectedRole, searchWorkloadActive, searchWorkload]);
   const displayed = useMemo(() => {
     if (!view) return null;
-    if (focus) return pathSubgraph(view, focus.upstreamFrom, focus.downstreamFrom);
+    if (focus) {
+      const paths = pathSubgraph(view, focus.upstreamFrom, focus.downstreamFrom);
+      return searchWorkloadActive ? downstreamSubgraph(paths, searchWorkload!) : paths;
+    }
     return focusIds ? focusSubgraph(view, focusIds) : overviewGraph(view);
-  }, [view, focus, focusIds]);
+  }, [view, focus, focusIds, searchWorkloadActive, searchWorkload]);
+  const reachingIds = useMemo(
+    () => (snapshot && view && workloadResource ? workloadsReachingResource(snapshot, view, workloadResource) : null),
+    [snapshot, view, workloadResource],
+  );
   const workloads = useMemo(() => (view ? [...view.nodes.values()].filter((n) => n.type === 'workload').sort((a, b) => a.label.localeCompare(b.label)) : []), [view]);
 
   if (error) return <p className="message error">{error}</p>;
@@ -72,6 +98,7 @@ export function App() {
     setSelectedNodeId(null);
     setRoleQuery('');
     setSelectedRole(null);
+    setSearchWorkload(null);
   };
   const switchTab = (next: Tab) => {
     setTab(next);
@@ -81,10 +108,11 @@ export function App() {
     setSelectedNodeId(null);
   };
   const highlightIds = focus ? focus.highlight : focusIds ?? [];
+  const graphHidden = displayed.nodes.size > MAX_GRAPH_NODES && largeGraphShown !== displayed;
   const selectedNode = selectedNodeId ? view.nodes.get(selectedNodeId) : undefined;
 
   return (
-    <div className="app">
+    <div className="app" style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties}>
       <header className="app-header">
         <h1>WIF Visualizer</h1>
         <span className="muted">
@@ -128,39 +156,63 @@ export function App() {
             mode={searchMode}
             onModeChange={setSearchMode}
             query={roleQuery}
-            onQueryChange={setRoleQuery}
+            onQueryChange={(query) => {
+              setRoleQuery(query);
+              setSearchWorkload(null);
+            }}
             candidates={searchMode === 'role' ? reachable.roles : reachable.permissions}
             matches={roleMatches}
             selectedRole={selectedRole}
-            onSelectRole={setSelectedRole}
+            onSelectRole={(role) => {
+              setSelectedRole(role);
+              setSearchWorkload(null);
+            }}
+            selectedWorkload={searchWorkload}
+            onSelectWorkload={setSearchWorkload}
             view={view}
           />
         ) : (
-          <ul className="workload-list">
-            {workloads.map((w) => (
-              <li key={w.id}>
-                <button type="button" className={focusIds?.[0] === w.id ? 'selected' : ''} onClick={() => focusOn(w.id)}>
-                  {w.severity && <span className={`severity-dot severity-${w.severity}`} />}
-                  {w.label}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <WorkloadList
+            workloads={workloads}
+            query={workloadQuery}
+            onQueryChange={setWorkloadQuery}
+            selectedId={focusIds?.[0] ?? null}
+            onSelect={focusOn}
+            resource={workloadResource}
+            onResourceChange={setWorkloadResource}
+            reachingIds={reachingIds}
+          />
         )}
       </nav>
+      <SidebarResizer width={sidebarWidth} onResize={setSidebarWidth} />
 
       <main className="graph">
         <div className="graph-caption">
           {selectedFinding
             ? `検出結果の経路: ${selectedFinding.ruleId}`
             : roleSearchActive
-              ? `${searchMode === 'role' ? 'ロール' : 'permission'}の経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}`
+              ? `${searchMode === 'role' ? 'ロール' : 'permission'}の経路: ${selectedRole ?? `「${roleQuery.trim()}」に一致する ${roleMatches.length} ロール`}${
+                  searchWorkloadActive ? `（${view.nodes.get(searchWorkload!)?.label ?? searchWorkload} から）` : ''
+                }`
               : focusIds
                 ? 'フォーカス表示'
                 : '概観（Workload → principal → SA）'}
           <span className="muted"> ・ ノード {displayed.nodes.size}</span>
         </div>
-        <GraphView graph={displayed} highlightIds={highlightIds} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
+        {graphHidden ? (
+          <div className="graph-placeholder">
+            <p>
+              ノードが {displayed.nodes.size} 件あり、多すぎるためグラフを表示していません（{MAX_GRAPH_NODES} 件まで表示します）。
+              <br />
+              左のリストでワークロードや検出結果を選ぶか、検索で絞り込んでください。
+            </p>
+            <button type="button" className="primary" onClick={() => setLargeGraphShown(displayed)}>
+              このまま表示する（重くなることがあります）
+            </button>
+          </div>
+        ) : (
+          <GraphView graph={displayed} highlightIds={highlightIds} selectedId={selectedNodeId} onSelect={setSelectedNodeId} />
+        )}
         {selectedNode && (
           <DetailPanel
             node={selectedNode}

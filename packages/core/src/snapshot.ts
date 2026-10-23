@@ -1,4 +1,5 @@
-import { SNAPSHOT_SCHEMA_VERSION, type AccessGraph, type EffectiveAccess, type Snapshot } from './types.ts';
+import type { ResourceInventory } from './inventory.ts';
+import { SNAPSHOT_SCHEMA_VERSION, type AccessGraph, type EffectiveAccess, type Snapshot, type TargetResource } from './types.ts';
 
 export interface CreateSnapshotInput {
   org: Snapshot['org'];
@@ -7,11 +8,18 @@ export interface CreateSnapshotInput {
   roles: Snapshot['roles'];
   graph: AccessGraph;
   effectiveAccess: EffectiveAccess[];
+  /** 件数の表と、リソースへの付与の付与先の祖先を求めるのに使う（インベントリ自体はスナップショットに含めない） */
+  inventory: ResourceInventory;
 }
 
 /** 差分を取りやすいよう、ノードとエッジを ID 順に並べて出力する */
 export function createSnapshot(input: CreateSnapshotInput): Snapshot {
   const byId = <T extends { id: string }>(a: T, b: T) => a.id.localeCompare(b.id);
+  const targetResources: Record<string, TargetResource> = {};
+  for (const name of [...new Set(input.effectiveAccess.filter((r) => r.grantedOnKind === 'resource').map((r) => r.grantedOn))].sort()) {
+    const target = input.inventory.targetResource(name);
+    if (target) targetResources[name] = target;
+  }
   return {
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
     collectedAt: input.collectedAt.toISOString(),
@@ -21,6 +29,8 @@ export function createSnapshot(input: CreateSnapshotInput): Snapshot {
     nodes: [...input.graph.nodes.values()].sort(byId),
     edges: [...input.graph.edges.values()].sort(byId),
     effectiveAccess: [...input.effectiveAccess].sort(byId),
+    resourceCounts: input.inventory.resourceCounts(),
+    targetResources,
   };
 }
 

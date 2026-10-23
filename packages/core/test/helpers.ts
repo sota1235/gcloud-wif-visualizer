@@ -1,4 +1,5 @@
 import { computeEffectiveAccess } from '../src/effective.ts';
+import { ResourceInventory } from '../src/inventory.ts';
 import { explore } from '../src/explore.ts';
 import { buildAccessGraph } from '../src/graph.ts';
 import { isWifMember } from '../src/names.ts';
@@ -53,12 +54,14 @@ export async function buildSnapshot(input: SnapshotInput): Promise<Snapshot> {
     explored,
     ...(input.existingServiceAccounts ? { existingServiceAccounts: input.existingServiceAccounts } : {}),
   });
+  const inventory = new ResourceInventory(containers, input.inventory ?? []);
   return createSnapshot({
     org: { id: '1' },
     collectedAt: new Date(input.collectedAt ?? '2026-10-19T00:00:00Z'),
     options: { maxDepth: 5 },
     roles,
     graph,
-    effectiveAccess: computeEffectiveAccess(graph, { inventory: input.inventory ?? [], rolePermissions: roles }),
+    effectiveAccess: computeEffectiveAccess(graph, { rolePermissions: roles, assetTypeOf: (name) => inventory.get(name)?.assetType }),
+    inventory,
   });
 }

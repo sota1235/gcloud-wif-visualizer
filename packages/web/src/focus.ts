@@ -51,3 +51,12 @@ export function overviewGraph(view: ViewGraph): ViewGraph {
   for (const node of view.nodes.values()) if (node.type === 'workload') ids.add(node.id);
   return { nodes: new Map([...view.nodes].filter(([id]) => ids.has(id))), edges };
 }
+
+/** graph のうち、fromId から下流に辿れるノードだけを残す（ほかのワークロードからの経路を除くため） */
+export function downstreamSubgraph(graph: ViewGraph, fromId: string): ViewGraph {
+  const ids = walk([fromId].filter((id) => graph.nodes.has(id)), adjacency(graph.edges).down);
+  return {
+    nodes: new Map([...graph.nodes].filter(([id]) => ids.has(id))),
+    edges: graph.edges.filter((e) => ids.has(e.source) && ids.has(e.target)),
+  };
+}

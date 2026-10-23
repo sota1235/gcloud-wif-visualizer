@@ -1,5 +1,6 @@
+import { ResourceList } from './ResourceList.tsx';
 import type { ViewNode } from './view-graph.ts';
-import { shortAssetType, shortResource } from './view-graph.ts';
+import { shortResource } from './view-graph.ts';
 
 interface Props {
   node: ViewNode;
@@ -83,16 +84,13 @@ export function DetailPanel({ node, grants, onFocus, onClose }: Props) {
         <dl>
           <dt>付与箇所</dt>
           <dd><code className="wrap">{node.grantedOn}</code></dd>
-          <dt>リソース（{node.resources?.length} 件）</dt>
+          <dt>アセットタイプ</dt>
+          <dd><code>{node.assetType}</code></dd>
+          <dt>操作できるロール</dt>
+          <dd><ul>{node.roles?.map((r) => <li key={r}><code>{r}</code></li>)}</ul></dd>
+          <dt>リソース（{node.resourceCount} 件）</dt>
           <dd>
-            <ul className="resource-list">
-              {node.resources?.map((r) => (
-                <li key={r.name}>
-                  <code className="wrap">{r.name}</code>
-                  <span className="muted"> {shortAssetType(r.assetType ?? '')} / {r.roles.map((x) => x.replace(/^roles\//, '')).join(', ')}</span>
-                </li>
-              ))}
-            </ul>
+            <ResourceList container={node.grantedOn ?? ''} assetType={node.assetType ?? ''} />
           </dd>
         </dl>
       )}
