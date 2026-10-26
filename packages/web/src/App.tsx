@@ -4,11 +4,13 @@ import { DetailPanel } from './DetailPanel.tsx';
 import { FindingList } from './FindingList.tsx';
 import { downstreamSubgraph, focusSubgraph, overviewGraph, pathSubgraph } from './focus.ts';
 import { GraphView } from './GraphView.tsx';
+import { candidateProjects, filterFindingsByProjects, principalsForProjects, type ProjectFilterMode } from './project-filter.ts';
+import { ProjectPicker } from './ProjectPicker.tsx';
 import { narrowToWorkload, reachableRolesAndPermissions, roleFocus, searchAccess, type SearchMode } from './role-search.ts';
 import { RoleSearch } from './RoleSearch.tsx';
 import { SidebarResizer, useSidebarWidth } from './SidebarResizer.tsx';
 import { buildViewGraph, findingFocus, type ViewGraph } from './view-graph.ts';
-import { workloadsReachingResource } from './workload-filter.ts';
+import { workloadsOfPrincipals, workloadsReachingResource } from './workload-filter.ts';
 import { WorkloadList } from './WorkloadList.tsx';
 
 type Tab = 'findings' | 'workloads' | 'roles';
@@ -29,6 +31,10 @@ export function App() {
   const [selectedRole, setSelectedRole] = useState<string | null>(null);
   const [workloadQuery, setWorkloadQuery] = useState('');
   const [workloadResource, setWorkloadResource] = useState<ResourceMatch | null>(null);
+  // 対応推奨リストとワークロードで共通の project での絞り込み
+  const [projectMode, setProjectMode] = useState<ProjectFilterMode>('reach');
+  // 選択から外した project（最初はすべて選んだ状態）
+  const [excludedProjects, setExcludedProjects] = useState<Set<string>>(new Set());
   // 検索結果のロールを選んだうえで、さらに 1 つのワークロードに絞る
   const [searchWorkload, setSearchWorkload] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
@@ -75,6 +81,19 @@ export function App() {
   const reachingIds = useMemo(
     () => (snapshot && view && workloadResource ? workloadsReachingResource(snapshot, view, workloadResource) : null),
     [snapshot, view, workloadResource],
+  );
+  const projectCandidates = useMemo(() => (snapshot ? candidateProjects(snapshot, projectMode) : []), [snapshot, projectMode]);
+  const selectedProjects = useMemo(() => projectCandidates.filter((p) => !excludedProjects.has(p.name)), [projectCandidates, excludedProjects]);
+  // すべて選んでいる場合は絞り込まない（どの project にも関係しないものも表示する）
+  const projectFilter = useMemo(
+    () => (selectedProjects.length < projectCandidates.length ? { projects: selectedProjects, mode: projectMode } : null),
+    [selectedProjects, projectCandidates, projectMode],
+  );
+  const projectPrincipals = useMemo(() => (snapshot && projectFilter ? principalsForProjects(snapshot, projectFilter) : null), [snapshot, projectFilter]);
+  const projectWorkloadIds = useMemo(() => (view && projectPrincipals ? workloadsOfPrincipals(view, projectPrincipals) : null), [view, projectPrincipals]);
+  const projectFindings = useMemo(
+    () => (snapshot && projectFilter && projectPrincipals ? filterFindingsByProjects(snapshot, findings, projectFilter, projectPrincipals) : findings),
+    [snapshot, findings, projectFilter, projectPrincipals],
   );
   const workloads = useMemo(() => (view ? [...view.nodes.values()].filter((n) => n.type === 'workload').sort((a, b) => a.label.localeCompare(b.label)) : []), [view]);
 
@@ -136,9 +155,23 @@ export function App() {
             検索
           </button>
         </div>
+        {tab !== 'roles' && (
+          <ProjectPicker
+            mode={projectMode}
+            onModeChange={setProjectMode}
+            candidates={projectCandidates}
+            excluded={excludedProjects}
+            onExcludedChange={setExcludedProjects}
+            summary={
+              tab === 'findings'
+                ? `${findings.length} 件中 ${projectFindings.length} 件が当てはまります`
+                : `${workloads.length} 件中 ${projectWorkloadIds?.size ?? 0} 件が当てはまります`
+            }
+          />
+        )}
         {tab === 'findings' ? (
           <FindingList
-            findings={findings}
+            findings={projectFindings}
             selectedId={selectedFinding?.id ?? null}
             onSelect={selectFinding}
             severityFilter={severityFilter}
@@ -181,6 +214,7 @@ export function App() {
             resource={workloadResource}
             onResourceChange={setWorkloadResource}
             reachingIds={reachingIds}
+            projectIds={projectWorkloadIds}
           />
         )}
       </nav>

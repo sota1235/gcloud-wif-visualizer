@@ -1,4 +1,4 @@
-import type { ResourceMatch, Snapshot } from '@wif-viz/core';
+import type { Member, ResourceMatch, Snapshot } from '@wif-viz/core';
 import { matchesTerms } from './role-search.ts';
 import type { ViewGraph, ViewNode } from './view-graph.ts';
 
@@ -30,5 +30,10 @@ export function workloadsReachingResource(snapshot: Pick<Snapshot, 'effectiveAcc
       )
       .map((row) => row.principal),
   );
+  return workloadsOfPrincipals(view, principals);
+}
+
+/** principal のいずれかに解決されるワークロードの ID */
+export function workloadsOfPrincipals(view: ViewGraph, principals: Set<Member>): Set<string> {
   return new Set(view.edges.filter((e) => e.kind === 'resolves' && principals.has(e.target)).map((e) => e.source));
 }
