@@ -95,6 +95,20 @@ export function App() {
     () => (snapshot && projectFilter && projectPrincipals ? filterFindingsByProjects(snapshot, findings, projectFilter, projectPrincipals) : findings),
     [snapshot, findings, projectFilter, projectPrincipals],
   );
+  // project の絞り込みで一覧から消えた項目を、選んだままグラフに残さない
+  useEffect(() => {
+    if (selectedFinding && !projectFindings.includes(selectedFinding)) {
+      setSelectedFinding(null);
+      setSelectedNodeId(null);
+    }
+  }, [projectFindings, selectedFinding]);
+  useEffect(() => {
+    const focused = focusIds?.length === 1 ? view?.nodes.get(focusIds[0]!) : undefined;
+    if (tab === 'workloads' && projectWorkloadIds && focused?.type === 'workload' && !projectWorkloadIds.has(focused.id)) {
+      setFocusIds(null);
+      setSelectedNodeId(null);
+    }
+  }, [tab, view, focusIds, projectWorkloadIds]);
   const workloads = useMemo(() => (view ? [...view.nodes.values()].filter((n) => n.type === 'workload').sort((a, b) => a.label.localeCompare(b.label)) : []), [view]);
 
   if (error) return <p className="message error">{error}</p>;

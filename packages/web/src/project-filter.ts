@@ -108,9 +108,19 @@ export function candidateProjects(snapshot: SnapshotPart, mode: ProjectFilterMod
   );
 }
 
-/** SA の member / email が属する project ID（`{name}@{projectId}.iam.gserviceaccount.com`） */
+/**
+ * SA の member / email が属する project の ID または number。
+ * - `{name}@{projectId}.iam.gserviceaccount.com`（ユーザーが作成した SA）
+ * - `{projectNumber}-compute@developer.gserviceaccount.com`（Compute Engine のデフォルト SA）
+ * - `{projectId}@appspot.gserviceaccount.com`（App Engine のデフォルト SA）
+ */
 function serviceAccountProjectOf(member: string): string | undefined {
-  return /@([^.@]+)\.iam\.gserviceaccount\.com$/.exec(member)?.[1];
+  const email = member.replace(/^serviceAccount:/, '');
+  return (
+    /@([^.@]+)\.iam\.gserviceaccount\.com$/.exec(email)?.[1] ??
+    /^(\d+)-compute@developer\.gserviceaccount\.com$/.exec(email)?.[1] ??
+    /^([^@]+)@appspot\.gserviceaccount\.com$/.exec(email)?.[1]
+  );
 }
 
 const POOL_PROJECT = /projects\/(\d+)\/locations\/global\/workloadIdentityPools\//;

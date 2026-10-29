@@ -152,4 +152,13 @@ describe('filterFindingsByProjects', () => {
       'chain',
     ]);
   });
+
+  it('reach の場合、経路上の Compute Engine や App Engine のデフォルト SA の project でも判定する', () => {
+    const viaCompute = finding('via-compute', [], { kind: 'path', ref: `${principal('org/web')}>serviceAccount:111-compute@developer.gserviceaccount.com` });
+    const viaAppEngine = finding('via-appengine', [], { kind: 'path', ref: `${principal('org/web')}>serviceAccount:app@appspot.gserviceaccount.com` });
+    const viaOther = finding('via-other', [], { kind: 'path', ref: `${principal('org/web')}>serviceAccount:333-compute@developer.gserviceaccount.com` });
+    expect(
+      filterFindingsByProjects(snapshotOf([]), [viaCompute, viaAppEngine, viaOther], { projects: [app], mode: 'reach' }, new Set()).map((f) => f.id),
+    ).toEqual(['via-compute', 'via-appengine']);
+  });
 });
