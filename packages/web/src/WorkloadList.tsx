@@ -20,9 +20,11 @@ interface Props {
   onResourceChange: (resource: ResourceMatch | null) => void;
   /** resource に到達できるワークロードの ID（resource がない場合は null） */
   reachingIds: Set<string> | null;
+  /** project での絞り込みに当てはまるワークロードの ID（絞り込まない場合は null） */
+  projectIds: Set<string> | null;
 }
 
-export function WorkloadList({ workloads, query, onQueryChange, selectedId, onSelect, resource, onResourceChange, reachingIds }: Props) {
+export function WorkloadList({ workloads, query, onQueryChange, selectedId, onSelect, resource, onResourceChange, reachingIds, projectIds }: Props) {
   // 入力中は画面全体を再描画しないよう、入力欄の値はここで持ち、止まってから親に渡す
   const [input, setInput] = useState(query);
   const debouncedInput = useDebouncedValue(input, FILTER_DELAY_MS);
@@ -30,10 +32,14 @@ export function WorkloadList({ workloads, query, onQueryChange, selectedId, onSe
     if (debouncedInput !== query) onQueryChange(debouncedInput);
   }, [debouncedInput, query, onQueryChange]);
   const filtered = useMemo(
-    () => filterWorkloads(reachingIds ? workloads.filter((w) => reachingIds.has(w.id)) : workloads, query),
-    [workloads, query, reachingIds],
+    () =>
+      filterWorkloads(
+        workloads.filter((w) => (!reachingIds || reachingIds.has(w.id)) && (!projectIds || projectIds.has(w.id))),
+        query,
+      ),
+    [workloads, query, reachingIds, projectIds],
   );
-  const filtering = query.trim() !== '' || reachingIds !== null;
+  const filtering = query.trim() !== '' || reachingIds !== null || projectIds !== null;
 
   return (
     <div className="workloads">
